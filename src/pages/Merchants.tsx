@@ -1,11 +1,12 @@
 import { useState } from "react";
-import { useMutation, useQuery } from "@tanstack/react-query";
-import { Search, Plus, ChevronRight } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Search, Plus, ChevronRight, ChevronUp, ChevronDown } from "lucide-react";
 import type { Merchant, Rule } from "@shared/types";
-import { formatMoney, parseAmount } from "@shared/money";
-import { del, get, patch, post } from "../lib/api";
+import { formatMoney } from "@shared/money";
+import { get, patch, post } from "../lib/api";
 import { useAccounts, useCategories, useRefresh } from "../lib/data";
 import { Button, Empty, ErrorNote, Label, Segmented, Sheet, Spinner, Toggle, clsx, errorText, useToast } from "../lib/ui";
+import { RuleEditor, describeActions, describeConditions, draftFromRule, emptyRule, type RuleDraft } from "../components/RuleEditor";
 import { PageHeader } from "../components/Layout";
 import { CategoryPicker } from "../components/CategoryPicker";
 import { CategoryIcon } from "../components/Transactions";
@@ -128,32 +129,71 @@ function MerchantForm({ m, onClose }: { m: Merchant; onClose: () => void }) {
 
 // ---------------------------------------------------------------------------
 
-function describeRule(r: Rule, catName: (id: number | null) => string | undefined): string {
-  const field = r.match_field === "merchant" ? "merchant" : r.match_field === "description" ? "description" : "text";
-  const how = { contains: "contains", equals: "is", starts_with: "starts with", regex: "matches" }[r.match_type];
-  const parts = [`If ${field} ${how} “${r.pattern}”`];
-  if (r.direction) parts.push(r.direction === "out" ? "money out" : "money in");
-  if (r.min_amount) parts.push(`≥ ${formatMoney(r.min_amount)}`);
-  if (r.max_amount) parts.push(`≤ ${formatMoney(r.max_amount)}`);
-  const actions = [];
-  if (r.set_category_id) actions.push(catName(r.set_category_id));
-  if (r.set_kind) actions.push(`mark as ${r.set_kind}`);
-  if (r.set_merchant_name) actions.push(`rename to “${r.set_merchant_name}”`);
-  if (r.set_excluded) actions.push("leave out of statistics");
-  return `${parts.join(", ")} → ${actions.join(", ")}`;
-}
+const EXAMPLES: { title: string; text: string; draft: () => RuleDraft }[] = [
+  {
+    title: "Rent to my landlord",
+    text: "Transfers of exactly 800 ₼ from one card → Rent",
+    draft: () => ({ ...emptyRule(), name: "Rent", conditions: [{ field: "type", op: "is", value: ["transfer_out"] }, { field: "amount", op: "eq", value: 80000 }] }),
+  },
+  {
+    title: "Late-night taxis",
+    text: "Taxi rides between 23:00 and 05:59 → tag “late night”",
+    draft: () => ({
+      ...emptyRule(),
+      name: "Late-night taxis",
+      conditions: [
+        { field: "any_text", op: "contains", value: "bolt" },
+        { field: "hour", op: "between", value: 23, value2: 5 },
+      ],
+      set_tags: "late night",
+    }),
+  },
+  {
+    title: "Savings card top-ups",
+    text: "Money arriving on your savings card → between my cards",
+    draft: () => ({ ...emptyRule(), name: "Savings top-ups", conditions: [{ field: "type", op: "is", value: ["transfer_in"] }, { field: "account", op: "is", value: [] }], set_kind: "transfer" }),
+  },
+];
 
 function RuleList() {
   const cats = useCategories();
+  const accounts = useAccounts();
+  const qc = useQueryClient();
+  const toast = useToast();
   const list = useQuery({ queryKey: ["rules"], queryFn: () => get<Rule[]>("/rules") });
-  const [editing, setEditing] = useState<Partial<Rule> | null>(null);
+  const [editing, setEditing] = useState<RuleDraft | null>(null);
+  const names = {
+    account: (id: number) => accounts.byId.get(id)?.name ?? "deleted card",
+    category: (id: number) => cats.info(id)?.path ?? "deleted category",
+  };
+  const toggle = useMutation({
+    mutationFn: (r: Rule) => patch(`/rules/${r.id}`, { enabled: !r.enabled }),
+    onMutate: (r) => qc.setQueryData<Rule[]>(["rules"], (l) => l?.map((x) => (x.id === r.id ? { ...x, enabled: r.enabled ? 0 : 1 } : x))),
+    onError: (e) => {
+      toast(errorText(e), "error");
+      qc.invalidateQueries({ queryKey: ["rules"] });
+    },
+  });
+  const reorder = useMutation({
+    mutationFn: (ids: number[]) => post("/rules/reorder", { ids }),
+    onMutate: (ids) => qc.setQueryData<Rule[]>(["rules"], (l) => ids.map((id) => l!.find((r) => r.id === id)!)),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["rules"] }),
+  });
+  const move = (i: number, delta: number) => {
+    const ids = (list.data ?? []).map((r) => r.id);
+    const [id] = ids.splice(i, 1);
+    ids.splice(i + delta, 0, id);
+    reorder.mutate(ids);
+  };
+
   return (
     <div>
       <div className="flex items-start justify-between gap-4">
         <p className="max-w-prose text-sm text-ink-2">
-          Rules run before anything else. Use them for things the app can't guess, e.g. card transfers to your landlord → Rent.
+          Rules run on every new transaction after the app has picked a category, top to bottom. The first rule that matches wins. Combine conditions like text,
+          amount, card, type, day and time.
         </p>
-        <Button size="sm" variant="primary" onClick={() => setEditing({ match_field: "any", match_type: "contains", priority: 100, enabled: 1 })}>
+        <Button size="sm" variant="primary" className="shrink-0" onClick={() => setEditing(emptyRule())}>
           <Plus size={16} /> New rule
         </Button>
       </div>
@@ -161,158 +201,57 @@ function RuleList() {
         {!list.data ? (
           <Spinner />
         ) : list.data.length === 0 ? (
-          <Empty title="No rules yet">Most of the time you won't need any: correcting a transaction's category already teaches the app.</Empty>
-        ) : (
-          <ul className="divide-y divide-line rounded-2xl border border-line bg-surface">
-            {list.data.map((r) => (
-              <li key={r.id}>
-                <button onClick={() => setEditing(r)} className={clsx("flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-surface-2", !r.enabled && "opacity-50")}>
-                  <span className="min-w-0 flex-1">
-                    {r.name && <span className="block font-medium">{r.name}</span>}
-                    <span className="block text-sm text-ink-2">{describeRule(r, (id) => cats.info(id)?.path)}</span>
-                  </span>
-                  <span className="text-[12px] text-ink-3">{r.hits} uses</span>
+          <div>
+            <Empty title="No rules yet">Most of the time you won't need any: correcting a transaction's category already teaches the app. Rules are for the special cases.</Empty>
+            <p className="mb-2 px-1 text-sm font-medium text-ink-2">Start from an example</p>
+            <div className="grid gap-2 sm:grid-cols-3">
+              {EXAMPLES.map((ex) => (
+                <button key={ex.title} onClick={() => setEditing(ex.draft())} className="rounded-2xl border border-line bg-surface px-4 py-3 text-left hover:bg-surface-2">
+                  <span className="block font-medium">{ex.title}</span>
+                  <span className="mt-0.5 block text-sm text-ink-2">{ex.text}</span>
                 </button>
-              </li>
-            ))}
-          </ul>
+              ))}
+            </div>
+          </div>
+        ) : (
+          <ol className="divide-y divide-line rounded-2xl border border-line bg-surface">
+            {list.data.map((r, i) => {
+              const d = draftFromRule(r);
+              return (
+                <li key={r.id} className={clsx("flex items-center gap-2 py-2 pl-2 pr-3", !r.enabled && "opacity-60")}>
+                  <div className="flex shrink-0 flex-col">
+                    <button className="rounded p-1 text-ink-3 hover:bg-surface-2 hover:text-ink disabled:opacity-30" disabled={i === 0} onClick={() => move(i, -1)} aria-label="Check earlier">
+                      <ChevronUp size={16} />
+                    </button>
+                    <button
+                      className="rounded p-1 text-ink-3 hover:bg-surface-2 hover:text-ink disabled:opacity-30"
+                      disabled={i === list.data.length - 1}
+                      onClick={() => move(i, 1)}
+                      aria-label="Check later"
+                    >
+                      <ChevronDown size={16} />
+                    </button>
+                  </div>
+                  <button onClick={() => setEditing(d)} className="min-w-0 flex-1 rounded-lg px-1 py-1 text-left hover:bg-surface-2">
+                    <span className="block font-medium">{r.name || `Rule ${i + 1}`}</span>
+                    <span className="block text-sm text-ink-2">
+                      If {describeConditions(d.conditions, d.match_mode, names)} → {describeActions(d, names.category) || "nothing"}
+                      {d.continue_after && <span className="text-ink-3"> · then keeps checking</span>}
+                    </span>
+                    <span className="block text-[12px] text-ink-3">{r.hits} {r.hits === 1 ? "use" : "uses"}</span>
+                  </button>
+                  <label className="relative inline-flex shrink-0 cursor-pointer" title={r.enabled ? "Turn off" : "Turn on"}>
+                    <input type="checkbox" className="peer sr-only" checked={Boolean(r.enabled)} onChange={() => toggle.mutate(r)} aria-label={`${r.name || "Rule"} is on`} />
+                    <span className="h-7 w-12 rounded-full border border-line bg-surface-2 transition-colors peer-checked:border-accent peer-checked:bg-accent peer-focus-visible:outline-2 peer-focus-visible:outline-accent" />
+                    <span className="absolute left-1 top-1 h-5 w-5 rounded-full bg-white shadow transition-transform peer-checked:translate-x-5" />
+                  </label>
+                </li>
+              );
+            })}
+          </ol>
         )}
       </div>
-      <Sheet open={Boolean(editing)} onClose={() => setEditing(null)} title={editing?.id ? "Edit rule" : "New rule"} wide>
-        {editing && <RuleForm key={editing.id ?? "new"} rule={editing} onClose={() => setEditing(null)} />}
-      </Sheet>
-    </div>
-  );
-}
-
-function RuleForm({ rule, onClose }: { rule: Partial<Rule>; onClose: () => void }) {
-  const refresh = useRefresh();
-  const toast = useToast();
-  const accounts = useAccounts();
-  const [r, setR] = useState<Partial<Rule>>(rule);
-  const [minText, setMinText] = useState(rule.min_amount ? String(rule.min_amount / 100) : "");
-  const [maxText, setMaxText] = useState(rule.max_amount ? String(rule.max_amount / 100) : "");
-  const set = <K extends keyof Rule>(k: K, v: Rule[K] | null) => setR((x) => ({ ...x, [k]: v }));
-  const body = () => ({
-    name: r.name || null,
-    match_field: r.match_field,
-    match_type: r.match_type,
-    pattern: r.pattern ?? "",
-    direction: r.direction ?? null,
-    min_amount: minText ? parseAmount(minText) : null,
-    max_amount: maxText ? parseAmount(maxText) : null,
-    account_id: r.account_id ?? null,
-    set_category_id: r.set_category_id ?? null,
-    set_kind: r.set_kind ?? null,
-    set_merchant_name: r.set_merchant_name || null,
-    set_excluded: r.set_excluded ? true : null,
-    priority: r.priority ?? 100,
-    enabled: r.enabled !== 0,
-  });
-  const save = useMutation({
-    mutationFn: async (applyNow: boolean) => {
-      const res = r.id ? (await patch(`/rules/${r.id}`, body()), { id: r.id }) : await post<{ id: number }>("/rules", body());
-      if (applyNow) return post<{ matched: number }>(`/rules/${res.id}/apply`);
-      return { matched: -1 };
-    },
-    onSuccess: (res) => {
-      toast(res.matched >= 0 ? `Rule saved and applied to ${res.matched} transactions` : "Rule saved");
-      refresh();
-      onClose();
-    },
-  });
-  const preview = useMutation({
-    mutationFn: async () => {
-      if (!r.id) throw new Error("Save the rule first to preview it");
-      return post<{ matched: number }>(`/rules/${r.id}/apply?dry=1`);
-    },
-    onSuccess: (res) => toast(`${res.matched} existing transactions match`),
-    onError: (e) => toast(errorText(e), "error"),
-  });
-  const remove = useMutation({
-    mutationFn: () => del(`/rules/${r.id}`),
-    onSuccess: () => {
-      toast("Rule deleted");
-      refresh();
-      onClose();
-    },
-  });
-
-  return (
-    <div className="flex flex-col gap-4">
-      <label className="block">
-        <Label hint="(optional)">Name</Label>
-        <input className="field" value={r.name ?? ""} onChange={(e) => set("name", e.target.value)} placeholder="e.g. Rent to landlord" />
-      </label>
-      <fieldset className="rounded-2xl border border-line p-4">
-        <legend className="px-1 text-sm font-medium text-ink-2">When a transaction…</legend>
-        <div className="grid gap-3 sm:grid-cols-[1fr_1fr_2fr]">
-          <select className="field" value={r.match_field} onChange={(e) => set("match_field", e.target.value as Rule["match_field"])} aria-label="Field">
-            <option value="any">text</option>
-            <option value="merchant">merchant</option>
-            <option value="description">description</option>
-          </select>
-          <select className="field" value={r.match_type} onChange={(e) => set("match_type", e.target.value as Rule["match_type"])} aria-label="Match type">
-            <option value="contains">contains</option>
-            <option value="equals">is exactly</option>
-            <option value="starts_with">starts with</option>
-            <option value="regex">matches pattern (regex)</option>
-          </select>
-          <input className="field" value={r.pattern ?? ""} onChange={(e) => set("pattern", e.target.value)} placeholder="e.g. BOLT" aria-label="Text to match" />
-        </div>
-        <div className="mt-3 grid gap-3 sm:grid-cols-4">
-          <select className="field" value={r.direction ?? ""} onChange={(e) => set("direction", (e.target.value || null) as Rule["direction"])} aria-label="Direction">
-            <option value="">in or out</option>
-            <option value="out">money out</option>
-            <option value="in">money in</option>
-          </select>
-          <input className="field" inputMode="decimal" value={minText} onChange={(e) => setMinText(e.target.value)} placeholder="min ₼" aria-label="Minimum amount" />
-          <input className="field" inputMode="decimal" value={maxText} onChange={(e) => setMaxText(e.target.value)} placeholder="max ₼" aria-label="Maximum amount" />
-          <select className="field" value={r.account_id ?? ""} onChange={(e) => set("account_id", e.target.value ? Number(e.target.value) : null)} aria-label="Card">
-            <option value="">any card</option>
-            {accounts.active.map((a) => (
-              <option key={a.id} value={a.id}>
-                {a.name}
-              </option>
-            ))}
-          </select>
-        </div>
-      </fieldset>
-      <fieldset className="rounded-2xl border border-line p-4">
-        <legend className="px-1 text-sm font-medium text-ink-2">…then</legend>
-        <Label>Set category</Label>
-        <CategoryPicker value={r.set_category_id ?? null} onChange={(id) => set("set_category_id", id)} />
-        <div className="mt-3 grid gap-3 sm:grid-cols-2">
-          <select className="field" value={r.set_kind ?? ""} onChange={(e) => set("set_kind", (e.target.value || null) as Rule["set_kind"])} aria-label="Type">
-            <option value="">keep type</option>
-            <option value="expense">mark as expense</option>
-            <option value="income">mark as income</option>
-            <option value="transfer">mark as transfer</option>
-          </select>
-          <input className="field" value={r.set_merchant_name ?? ""} onChange={(e) => set("set_merchant_name", e.target.value)} placeholder="rename merchant to… (optional)" />
-        </div>
-        <Toggle checked={Boolean(r.set_excluded)} onChange={(v) => set("set_excluded", v ? 1 : null)} label="Leave out of statistics" />
-      </fieldset>
-      <Toggle checked={r.enabled !== 0} onChange={(v) => set("enabled", v ? 1 : 0)} label="Rule is active" />
-      <ErrorNote error={save.error ?? remove.error} />
-      <div className="flex flex-wrap gap-2">
-        <Button variant="primary" loading={save.isPending && save.variables === true} onClick={() => save.mutate(true)}>
-          Save and apply to past transactions
-        </Button>
-        <Button loading={save.isPending && save.variables === false} onClick={() => save.mutate(false)}>
-          Save for new ones only
-        </Button>
-        {r.id && (
-          <>
-            <Button variant="ghost" loading={preview.isPending} onClick={() => preview.mutate()}>
-              Preview matches
-            </Button>
-            <Button variant="danger" loading={remove.isPending} onClick={() => window.confirm("Delete this rule?") && remove.mutate()}>
-              Delete
-            </Button>
-          </>
-        )}
-      </div>
+      {editing && <RuleEditor key={editing.id ?? "new"} initial={editing} onClose={() => setEditing(null)} />}
     </div>
   );
 }

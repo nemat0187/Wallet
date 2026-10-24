@@ -4,8 +4,8 @@ import type { AppEnv } from "../env";
 import type { Transaction } from "@shared/types";
 import { badRequest, body, intParam, notFound } from "../lib/http";
 import { all, first, nowIso, placeholders, run, type SqlValue } from "../lib/db";
-import { createContext, createTransaction } from "../services/transactions";
-import { loadCategories, setMerchantCategory, upsertMerchant } from "../services/categorize";
+import { createContext, createTransaction, scanTransferPairs } from "../services/transactions";
+import { defaultCategoryFor, loadCategories, setMerchantCategory, upsertMerchant } from "../services/categorize";
 import { afterTransactions } from "../services/alerts";
 import { TX_SELECT } from "../services/analytics";
 import { convert } from "../services/fx";
@@ -56,11 +56,78 @@ app.get("/", async (c) => {
   return c.json({ items, next_cursor: more && last ? `${last.occurred_at}|${last.id}` : null });
 });
 
+/**
+ * Tag (or untag) transactions as transfers between the owner's own accounts.
+ * Tagged ones are left out of spending, income and budgets; untagging puts them
+ * back into their default category for the direction of the money.
+ */
+async function setOwnTransfer(db: D1Database, ids: number[], on: boolean): Promise<void> {
+  if (!ids.length) return;
+  const idx = await loadCategories(db);
+  const now = nowIso();
+  if (on) {
+    const own = idx.bySlug.get("transfer.own");
+    if (!own) badRequest("The “Between my accounts” category is missing");
+    await run(
+      db,
+      `UPDATE transactions SET kind = 'transfer', category_id = ?, category_source = 'user', needs_review = 0, updated_at = ? WHERE id IN (${placeholders(ids.length)})`,
+      own.id,
+      now,
+      ...ids,
+    );
+    return;
+  }
+  const rows = await all<{ id: number; amount: number; tx_type: string | null; kind: string }>(
+    db,
+    `SELECT id, amount, tx_type, kind FROM transactions WHERE id IN (${placeholders(ids.length)})`,
+    ...ids,
+  );
+  const stmts = rows
+    .filter((r) => r.kind === "transfer")
+    .map((r) => {
+      const cat = defaultCategoryFor(idx, r.amount, r.tx_type);
+      return db
+        .prepare("UPDATE transactions SET kind = ?, category_id = ?, category_source = 'user', updated_at = ? WHERE id = ?")
+        .bind(cat?.kind ?? (r.amount > 0 ? "income" : "expense"), cat?.id ?? null, now, r.id);
+    });
+  if (stmts.length) await db.batch(stmts);
+}
+
+/** Suggested pairs that look like transfers between own cards and aren't tagged yet. */
+app.get("/transfer-pairs", async (c) => {
+  const rows = await all<Transaction>(
+    c.env.DB,
+    `${TX_SELECT} WHERE t.pair_id > 0 AND t.kind <> 'transfer' AND t.amount < 0
+       AND EXISTS (SELECT 1 FROM transactions o WHERE o.id = t.pair_id AND o.kind <> 'transfer')
+     ORDER BY t.occurred_at DESC LIMIT 100`,
+  );
+  const partners = rows.length
+    ? await all<Transaction>(c.env.DB, `${TX_SELECT} WHERE t.id IN (${placeholders(rows.length)})`, ...rows.map((r) => r.pair_id as number))
+    : [];
+  const byId = new Map(partners.map((p) => [p.id, p]));
+  return c.json(rows.filter((r) => byId.has(r.pair_id!)).map((out) => ({ out, in: byId.get(out.pair_id!) })));
+});
+
+/** Look through history for pairs (e.g. after importing statements). */
+app.post("/transfer-pairs/scan", async (c) => c.json({ found: await scanTransferPairs(c.env.DB) }));
+
+/** "Not a transfer between my cards": remove the suggestion from both sides and remember the answer (pair_id 0). */
+app.post("/:id/unpair", async (c) => {
+  const id = intParam(c, "id");
+  const tx = await first<{ pair_id: number | null }>(c.env.DB, "SELECT pair_id FROM transactions WHERE id = ?", id);
+  if (!tx) notFound();
+  await run(c.env.DB, "UPDATE transactions SET pair_id = 0 WHERE id IN (?, ?)", id, tx.pair_id || id);
+  return c.json({ ok: true });
+});
+
 app.get("/:id", async (c) => {
   const tx = await first<Transaction>(c.env.DB, `${TX_SELECT} WHERE t.id = ?`, intParam(c, "id"));
   if (!tx) notFound();
-  const message = await first(c.env.DB, "SELECT id, body, received_at, parse_method FROM raw_messages WHERE transaction_id = ?", tx.id);
-  return c.json({ ...tx, message });
+  const [message, pair] = await Promise.all([
+    first(c.env.DB, "SELECT id, body, received_at, parse_method FROM raw_messages WHERE transaction_id = ?", tx.id),
+    tx.pair_id ? first<Transaction>(c.env.DB, `${TX_SELECT} WHERE t.id = ?`, tx.pair_id) : Promise.resolve(null),
+  ]);
+  return c.json({ ...tx, message, pair });
 });
 
 const NewTx = z.object({
@@ -119,6 +186,8 @@ const PatchTx = z.object({
   amount: z.number().int().positive().optional(),
   direction: z.enum(["in", "out"]).optional(),
   reviewed: z.boolean().optional(),
+  /** With kind: also tag/untag the suggested counterpart. */
+  include_pair: z.boolean().optional(),
 });
 
 app.patch("/:id", async (c) => {
@@ -147,7 +216,13 @@ app.patch("/:id", async (c) => {
       applied = await setMerchantCategory(c.env.DB, tx.merchant_id, cat.id, { applyToPast: input.apply_to_merchant === true });
     }
   }
-  if (input.kind !== undefined) set("kind", input.kind);
+  if (input.kind !== undefined && input.category_id === undefined) {
+    // "Between my accounts" on/off, optionally for the suggested counterpart too.
+    const ids = [id, ...(input.include_pair && tx.pair_id ? [tx.pair_id] : [])];
+    if (input.kind === "transfer") await setOwnTransfer(c.env.DB, ids, true);
+    else if (tx.kind === "transfer") await setOwnTransfer(c.env.DB, ids, false);
+    else set("kind", input.kind);
+  } else if (input.kind !== undefined) set("kind", input.kind);
   if (input.note !== undefined) set("note", input.note);
   if (input.tags !== undefined) set("tags", input.tags);
   if (input.excluded !== undefined) set("excluded", input.excluded ? 1 : 0);
@@ -192,10 +267,13 @@ app.post("/bulk", async (c) => {
       excluded: z.boolean().optional(),
       reviewed: z.boolean().optional(),
       delete: z.boolean().optional(),
+      /** "transfer" = tag as between my accounts; "expense"/"income" = untag. */
+      kind: z.enum(["expense", "income", "transfer"]).optional(),
     }),
   );
   const ph = placeholders(input.ids.length);
   if (input.delete) {
+    await run(c.env.DB, `UPDATE transactions SET pair_id = NULL WHERE pair_id IN (${ph})`, ...input.ids);
     await run(c.env.DB, `DELETE FROM transactions WHERE id IN (${ph})`, ...input.ids);
     return c.json({ ok: true });
   }
@@ -215,12 +293,14 @@ app.post("/bulk", async (c) => {
   if (input.excluded !== undefined)
     await run(c.env.DB, `UPDATE transactions SET excluded = ?, updated_at = ? WHERE id IN (${ph})`, input.excluded ? 1 : 0, now, ...input.ids);
   if (input.reviewed) await run(c.env.DB, `UPDATE transactions SET needs_review = 0 WHERE id IN (${ph})`, ...input.ids);
+  if (input.kind) await setOwnTransfer(c.env.DB, input.ids, input.kind === "transfer");
   return c.json({ ok: true });
 });
 
 app.delete("/:id", async (c) => {
   const id = intParam(c, "id");
   await run(c.env.DB, "UPDATE raw_messages SET transaction_id = NULL, status = 'ignored' WHERE transaction_id = ?", id);
+  await run(c.env.DB, "UPDATE transactions SET pair_id = NULL WHERE pair_id = ?", id);
   await run(c.env.DB, "DELETE FROM transactions WHERE id = ?", id);
   return c.json({ ok: true });
 });

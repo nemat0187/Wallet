@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
 import type { Transaction } from "@shared/types";
-import { formatDay, formatMoney, localDate, shiftPeriod } from "@shared/money";
+import { addDays, formatDay, formatMoney, localDate, shiftPeriod } from "@shared/money";
 import { get } from "../lib/api";
 import { useBootstrap, useCategories } from "../lib/data";
 import { Empty, Section, Segmented, Spinner, clsx } from "../lib/ui";
@@ -33,7 +33,7 @@ interface Recurring {
   active: boolean;
 }
 
-type Range = "month" | "last" | "3m" | "12m";
+type Range = "month" | "last" | "3m" | "12m" | "custom";
 
 export default function Analytics() {
   const boot = useBootstrap();
@@ -43,7 +43,9 @@ export default function Analytics() {
   const today = localDate(new Date(), settings?.tz_offset_minutes ?? 240);
   const startDay = settings?.month_start_day ?? 1;
   const [range, setRange] = useState<Range>("month");
+  const [custom, setCustom] = useState({ from: addDays(today, -29), to: today });
   const { from, to } = useMemo(() => {
+    if (range === "custom") return custom.from <= custom.to ? custom : { from: custom.to, to: custom.from };
     if (range === "month") return { from: shiftPeriod(today, startDay, 0).start, to: today };
     if (range === "last") {
       const p = shiftPeriod(today, startDay, -1);
@@ -51,7 +53,7 @@ export default function Analytics() {
     }
     if (range === "3m") return { from: shiftPeriod(today, startDay, -2).start, to: today };
     return { from: shiftPeriod(today, startDay, -11).start, to: today };
-  }, [range, today, startDay]);
+  }, [range, today, startDay, custom]);
 
   const trends = useQuery({ queryKey: ["trends"], queryFn: () => get<TrendPeriod[]>("/analytics/trends?periods=12") });
   const recurring = useQuery({ queryKey: ["recurring"], queryFn: () => get<Recurring[]>("/analytics/recurring") });
@@ -188,19 +190,44 @@ export default function Analytics() {
 
       {/* Everything below follows this range */}
       <div className="sticky top-0 z-20 -mx-4 mt-10 border-b border-line bg-paper/95 px-4 py-3 backdrop-blur sm:-mx-6 sm:px-6 lg:-mx-10 lg:px-10">
-        <Segmented
-          value={range}
-          onChange={setRange}
-          options={[
-            { value: "month", label: "This month" },
-            { value: "last", label: "Last month" },
-            { value: "3m", label: "3 months" },
-            { value: "12m", label: "12 months" },
-          ]}
-        />
-        <p className="mt-1.5 text-[13px] text-ink-3">
-          {formatDay(from, true)} – {formatDay(to, true)}
-        </p>
+        <div className="scroll-x -mx-4 overflow-x-auto px-4">
+          <Segmented
+            value={range}
+            onChange={setRange}
+            options={[
+              { value: "month", label: "This month" },
+              { value: "last", label: "Last month" },
+              { value: "3m", label: "3 months" },
+              { value: "12m", label: "12 months" },
+              { value: "custom", label: "Custom" },
+            ]}
+          />
+        </div>
+        {range === "custom" ? (
+          <div className="mt-2 flex max-w-md items-center gap-2">
+            <input
+              type="date"
+              className="field min-h-10 py-1.5"
+              value={custom.from}
+              max={today}
+              onChange={(e) => e.target.value && setCustom({ ...custom, from: e.target.value })}
+              aria-label="From"
+            />
+            <span className="text-ink-3">–</span>
+            <input
+              type="date"
+              className="field min-h-10 py-1.5"
+              value={custom.to}
+              max={today}
+              onChange={(e) => e.target.value && setCustom({ ...custom, to: e.target.value })}
+              aria-label="To"
+            />
+          </div>
+        ) : (
+          <p className="mt-1.5 text-[13px] text-ink-3">
+            {formatDay(from, true)} – {formatDay(to, true)}
+          </p>
+        )}
       </div>
 
       <div className={clsx("transition-opacity", refetching && "opacity-60")}>

@@ -1,14 +1,16 @@
 import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useInfiniteQuery } from "@tanstack/react-query";
-import { Search, X, Download } from "lucide-react";
+import { useInfiniteQuery, useMutation } from "@tanstack/react-query";
+import { Search, X, Download, CheckSquare, ArrowLeftRight, Tag, EyeOff, Trash2 } from "lucide-react";
 import type { Transaction } from "@shared/types";
-import { addDays, formatMoney, localDate, shiftPeriod } from "@shared/money";
-import { get } from "../lib/api";
-import { useAccounts, useBootstrap, useCategories } from "../lib/data";
-import { Button, Empty, Spinner, clsx } from "../lib/ui";
+import { addDays, formatDay, formatMoney, localDate, shiftPeriod } from "@shared/money";
+import { get, post } from "../lib/api";
+import { useAccounts, useBootstrap, useCategories, useRefresh } from "../lib/data";
+import { Button, Chip, Empty, Sheet, Spinner, clsx, errorText, useToast } from "../lib/ui";
 import { PageHeader, useQuickAdd } from "../components/Layout";
 import { TxEditor, TxList } from "../components/Transactions";
+import { TransferPairsBanner } from "../components/Transfers";
+import { CategoryPicker } from "../components/CategoryPicker";
 
 type Page = { items: Transaction[]; next_cursor: string | null };
 
@@ -23,6 +25,8 @@ export default function Activity() {
   const today = localDate(new Date(), tz);
   const [search, setSearch] = useState(params.get("q") ?? "");
   const [open, setOpen] = useState<Transaction | null>(null);
+  const [pickDates, setPickDates] = useState(false);
+  const [selected, setSelected] = useState<Set<number> | null>(null);
 
   const set = (key: string, value: string | null) => {
     const next = new URLSearchParams(params);
@@ -72,6 +76,13 @@ export default function Activity() {
         }
         actions={
           <>
+            <Button size="sm" variant="ghost" onClick={() => setSelected(selected ? null : new Set())} aria-pressed={Boolean(selected)}>
+              {selected ? "Cancel" : (
+                <>
+                  <CheckSquare size={16} /> Select
+                </>
+              )}
+            </Button>
             <a href="/api/export/transactions.csv" className="hidden sm:block">
               <Button size="sm" variant="ghost">
                 <Download size={16} /> Export
@@ -83,6 +94,8 @@ export default function Activity() {
           </>
         }
       />
+
+      <TransferPairsBanner className="mt-4" />
 
       <form
         className="relative mt-4"
@@ -114,11 +127,26 @@ export default function Activity() {
               if (p.to) next.set("to", p.to);
               else next.delete("to");
               setParams(next, { replace: true });
+              setPickDates(false);
             }}
           >
             {p.label}
           </Chip>
         ))}
+        <Chip
+          active={activePreset === "custom" || pickDates}
+          onClick={() => {
+            if (!pickDates && !from && !to) {
+              const next = new URLSearchParams(params);
+              next.set("from", addDays(today, -6));
+              next.set("to", today);
+              setParams(next, { replace: true });
+            }
+            setPickDates(!pickDates || activePreset !== "custom");
+          }}
+        >
+          {activePreset === "custom" ? `${from ? formatDay(from) : "…"} – ${to ? formatDay(to) : "…"}` : "Custom dates"}
+        </Chip>
         <Chip active={review} onClick={() => set("review", review ? null : "1")}>
           Needs a check
         </Chip>
@@ -147,6 +175,17 @@ export default function Activity() {
           <option value="transfer">Transfers</option>
         </select>
       </div>
+
+      {pickDates && (
+        <div className="mt-2 flex max-w-md items-center gap-2">
+          <input type="date" className="field min-h-10 py-1.5" value={from} max={to || undefined} onChange={(e) => set("from", e.target.value || null)} aria-label="From" />
+          <span className="text-ink-3">–</span>
+          <input type="date" className="field min-h-10 py-1.5" value={to} min={from || undefined} onChange={(e) => set("to", e.target.value || null)} aria-label="To" />
+          <Button size="sm" variant="ghost" onClick={() => setPickDates(false)}>
+            Done
+          </Button>
+        </div>
+      )}
 
       {(category || merchant || params.get("q")) && (
         <div className="mt-2 flex flex-wrap gap-2">
@@ -178,7 +217,26 @@ export default function Activity() {
           </Empty>
         ) : (
           <>
-            <TxList items={items} onOpen={setOpen} tz={tz} />
+            {selected && (
+              <p className="mb-3 px-1 text-sm text-ink-2">
+                Tap transactions to select them.{" "}
+                <button className="font-medium text-accent" onClick={() => setSelected(new Set(items.map((t) => t.id)))}>
+                  Select all {items.length}
+                </button>
+              </p>
+            )}
+            <TxList
+              items={items}
+              tz={tz}
+              selected={selected ?? undefined}
+              onOpen={(t) => {
+                if (!selected) return setOpen(t);
+                const next = new Set(selected);
+                if (next.has(t.id)) next.delete(t.id);
+                else next.add(t.id);
+                setSelected(next);
+              }}
+            />
             {list.hasNextPage && (
               <div className="mt-4 flex justify-center">
                 <Button onClick={() => list.fetchNextPage()} loading={list.isFetchingNextPage}>
@@ -190,23 +248,99 @@ export default function Activity() {
         )}
       </div>
       <TxEditor tx={open} onClose={() => setOpen(null)} />
+      {selected && <div className="h-36" aria-hidden />}
+      {selected && selected.size > 0 && (
+        <BulkBar items={items.filter((t) => selected.has(t.id))} onDone={() => setSelected(null)} onClear={() => setSelected(new Set())} />
+      )}
     </div>
   );
 }
 
-function Chip({ active, onClick, children }: { active: boolean; onClick: () => void; children: React.ReactNode }) {
+/** Actions for several selected transactions at once. */
+function BulkBar({ items, onDone, onClear }: { items: Transaction[]; onDone: () => void; onClear: () => void }) {
+  const refresh = useRefresh();
+  const toast = useToast();
+  const [picking, setPicking] = useState(false);
+  const ids = items.map((t) => t.id);
+  const run = useMutation({
+    mutationFn: (body: Record<string, unknown>) => post("/transactions/bulk", { ids, ...body }),
+    onSuccess: (_r, body) => {
+      const n = ids.length;
+      const what = n === 1 ? "1 transaction" : `${n} transactions`;
+      toast(
+        body.delete
+          ? `Deleted ${what}`
+          : body.kind === "transfer"
+            ? `Marked ${what} as between your cards`
+            : body.kind
+              ? `${what} count as spending and income again`
+              : body.category_id
+                ? `Changed the category of ${what}`
+                : body.excluded
+                  ? `${what} left out of statistics`
+                  : `${what} counted in statistics again`,
+      );
+      refresh();
+      onDone();
+    },
+    onError: (e) => toast(errorText(e), "error"),
+  });
+  const anyTransfer = items.some((t) => t.kind === "transfer");
+  const allTransfer = items.every((t) => t.kind === "transfer");
+  const allExcluded = items.every((t) => t.excluded);
+  const net = items.reduce((s, t) => s + t.amount_base, 0);
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={active}
-      className={clsx(
-        "h-9 shrink-0 rounded-full border px-3.5 text-sm font-medium transition-colors",
-        active ? "border-accent bg-accent-soft text-ink" : "border-line bg-surface text-ink-2 hover:text-ink",
-      )}
-    >
-      {children}
-    </button>
+    <>
+      <div className="fixed inset-x-0 bottom-20 z-40 px-3 lg:bottom-6 lg:left-64">
+        <div className="sheet-in mx-auto max-w-3xl rounded-2xl border border-line bg-surface p-2 shadow-sheet">
+          <div className="flex items-center justify-between gap-2 px-2 pb-1.5 pt-0.5 text-sm">
+            <span>
+              <strong className="font-semibold">{ids.length}</strong> selected
+              <span className="num ml-2 text-ink-3">{formatMoney(net, "AZN", { sign: net > 0 })}</span>
+            </span>
+            <button className="font-medium text-ink-3 hover:text-ink" onClick={onClear}>
+              Clear
+            </button>
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {!allTransfer && (
+              <Button size="sm" variant="primary" className="shrink-0" disabled={run.isPending} onClick={() => run.mutate({ kind: "transfer" })}>
+                <ArrowLeftRight size={16} /> Between my cards
+              </Button>
+            )}
+            {anyTransfer && (
+              <Button size="sm" className="shrink-0" disabled={run.isPending} onClick={() => run.mutate({ kind: "expense" })}>
+                Not a transfer
+              </Button>
+            )}
+            <Button size="sm" className="shrink-0" disabled={run.isPending} onClick={() => setPicking(true)}>
+              <Tag size={16} /> Category
+            </Button>
+            <Button size="sm" className="shrink-0" disabled={run.isPending} onClick={() => run.mutate({ excluded: !allExcluded })}>
+              <EyeOff size={16} /> {allExcluded ? "Count in stats" : "Leave out of stats"}
+            </Button>
+            <Button
+              size="sm"
+              variant="danger"
+              className="shrink-0"
+              disabled={run.isPending}
+              onClick={() => window.confirm(`Delete ${ids.length} ${ids.length === 1 ? "transaction" : "transactions"}? This can't be undone.`) && run.mutate({ delete: true })}
+            >
+              <Trash2 size={16} /> Delete
+            </Button>
+          </div>
+        </div>
+      </div>
+      <Sheet open={picking} onClose={() => setPicking(false)} title={`Category for ${ids.length} ${ids.length === 1 ? "transaction" : "transactions"}`}>
+        <CategoryPicker
+          value={null}
+          onChange={(id) => {
+            setPicking(false);
+            run.mutate({ category_id: id });
+          }}
+        />
+      </Sheet>
+    </>
   );
 }
 

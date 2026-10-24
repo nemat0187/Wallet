@@ -14,6 +14,7 @@ import {
   Upload,
   Settings,
   Plus,
+  LayoutDashboard,
 } from "lucide-react";
 import { clsx } from "../lib/ui";
 import { useBootstrap } from "../lib/data";
@@ -30,6 +31,7 @@ const primary = [
 ];
 
 const secondary = [
+  { to: "/dashboards", label: "My dashboards", icon: LayoutDashboard },
   { to: "/analytics", label: "Analytics", icon: BarChart3 },
   { to: "/categories", label: "Categories", icon: Tags },
   { to: "/merchants", label: "Merchants & rules", icon: Store },

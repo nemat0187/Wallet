@@ -1,19 +1,18 @@
-// Categorization pipeline. Cheapest and most trustworthy sources first:
-//   1. the owner's own rules
-//   2. merchant memory (past corrections, earlier AI answers)
-//   3. the built-in merchant dictionary
-//   4. sensible defaults from the transaction type
-//   5. AI — only for merchants never seen before, and only once per merchant.
+// Automatic categorization. Cheapest and most trustworthy sources first:
+//   1. merchant memory (past corrections, earlier AI answers)
+//   2. the built-in merchant dictionary
+//   3. sensible defaults from the transaction type
+//   4. AI — only for merchants never seen before, and only once per merchant.
+// The owner's rules (shared/rules.ts) are applied on top of the result, so they always win.
 
 import { z } from "zod";
 import type { Env } from "../env";
-import type { Category, CategorySource, ParsedMessage, Rule, TxKind } from "@shared/types";
+import type { Category, CategorySource, ParsedMessage, TxKind } from "@shared/types";
 import { FALLBACK_SLUG } from "@shared/categories";
 import { all, first, nowIso, placeholders, run } from "../lib/db";
 import { builtinMatch, merchantKey, prettifyMerchant } from "./merchants";
 import { aiBlocked, structuredCall } from "./ai";
 import { getSettings } from "./settings";
-import { foldText } from "./parser";
 
 export interface CategoryIndex {
   list: Category[];
@@ -73,35 +72,16 @@ export interface CategorizeResult {
   merchant_name: string | null;
   excluded: boolean;
   needs_ai: boolean;
-  rule_id: number | null;
 }
 
 export async function categorize(
   db: D1Database,
   idx: CategoryIndex,
   input: CategorizeInput,
-  opts: { atmAsTransfer: boolean; rules?: Rule[] },
+  opts: { atmAsTransfer: boolean },
 ): Promise<CategorizeResult> {
-  const rules =
-    opts.rules ?? (await all<Rule>(db, "SELECT * FROM rules WHERE enabled = 1 ORDER BY priority, id"));
   const direction = input.amount >= 0 ? "in" : "out";
   const merchantName = input.merchant?.name ?? null;
-
-  // 1. Owner's rules
-  for (const rule of rules) {
-    if (!ruleMatches(rule, input, direction)) continue;
-    const cat = rule.set_category_id ? idx.byId.get(rule.set_category_id) : null;
-    const kind = rule.set_kind ?? cat?.kind ?? defaultKind(input.type);
-    return {
-      category_id: cat?.id ?? fallback(idx, kind),
-      category_source: "rule",
-      kind,
-      merchant_name: rule.set_merchant_name || merchantName,
-      excluded: rule.set_excluded === 1,
-      needs_ai: false,
-      rule_id: rule.id,
-    };
-  }
 
   // Cash withdrawals and fees don't depend on the merchant.
   if (input.type === "cash_withdrawal") {
@@ -113,20 +93,21 @@ export async function categorize(
     return base(idx.bySlug.get("finance.fees")?.id ?? fallback(idx, "expense"), "default", "expense", merchantName ?? "Bank fee");
   }
   // Card-to-card transfers: "ABB MOBILE" etc. is the channel, not a shop, so merchant memory and AI
-  // don't apply. Transfers between your own cards are matched up afterwards; rules can refine the rest.
+  // don't apply. Each card is tracked on its own: money out is spending, money in is income, until
+  // the owner tags a pair as a transfer between their own cards.
   if (input.type === "transfer_in" || input.type === "transfer_out") {
     const cat = idx.bySlug.get(input.type === "transfer_in" ? "income.transfer" : "people");
     const kind = cat?.kind ?? (input.type === "transfer_in" ? "income" : "expense");
     return base(cat?.id ?? fallback(idx, kind), "default", kind, merchantName);
   }
 
-  // 2. Merchant memory (only when the remembered category fits the direction of the money)
+  // 1. Merchant memory (only when the remembered category fits the direction of the money)
   const known = input.merchant?.category_id ? idx.byId.get(input.merchant.category_id) : null;
   if (known && !known.archived && fitsDirection(known.kind, input)) {
     return base(known.id, "merchant", known.kind, merchantName);
   }
 
-  // 3. Built-in dictionary
+  // 2. Built-in dictionary
   if (input.merchant) {
     const hit = builtinMatch(input.merchant.key);
     const cat = hit ? idx.bySlug.get(hit.slug) : null;
@@ -142,7 +123,7 @@ export async function categorize(
     }
   }
 
-  // 4. Defaults by transaction type (AI may refine these later when a merchant is present)
+  // 3. Defaults by transaction type (AI may refine these later when a merchant is present)
   const typeSlug: Partial<Record<ParsedMessage["type"], string>> = {
     income: "income.other",
     refund: "income.refund",
@@ -159,11 +140,10 @@ export async function categorize(
     excluded: false,
     // Purchases/income from an unknown merchant are worth asking AI about.
     needs_ai: hasName,
-    rule_id: null,
   };
 
   function base(category_id: number, source: CategorySource, kind: TxKind, name: string | null): CategorizeResult {
-    return { category_id, category_source: source, kind, merchant_name: name, excluded: false, needs_ai: false, rule_id: null };
+    return { category_id, category_source: source, kind, merchant_name: name, excluded: false, needs_ai: false };
   }
 }
 
@@ -174,46 +154,17 @@ function fitsDirection(kind: TxKind, input: CategorizeInput): boolean {
   return true;
 }
 
-function defaultKind(type: ParsedMessage["type"]): TxKind {
-  return type === "income" || type === "transfer_in" ? "income" : "expense";
+/** The category a transaction falls back to when it's no longer tagged as a transfer between own accounts. */
+export function defaultCategoryFor(idx: CategoryIndex, amount: number, txType: string | null): Category | undefined {
+  if (amount > 0) {
+    return idx.bySlug.get(txType === "transfer_in" ? "income.transfer" : txType === "refund" ? "income.refund" : "income.other");
+  }
+  const slug = txType === "transfer_out" ? "people" : txType === "cash_withdrawal" ? "cash" : txType === "fee" ? "finance.fees" : "uncategorized";
+  return idx.bySlug.get(slug);
 }
 
-function fallback(idx: CategoryIndex, kind: TxKind): number {
+export function fallback(idx: CategoryIndex, kind: TxKind): number {
   return idx.bySlug.get(FALLBACK_SLUG[kind])?.id ?? idx.list[0].id;
-}
-
-export function ruleMatches(rule: Rule, input: Pick<CategorizeInput, "merchant_raw" | "description" | "amount" | "account_id"> & { merchant?: { name: string } | null }, direction: "in" | "out"): boolean {
-  if (rule.direction && rule.direction !== direction) return false;
-  if (rule.account_id && rule.account_id !== input.account_id) return false;
-  const abs = Math.abs(input.amount);
-  if (rule.min_amount !== null && abs < rule.min_amount) return false;
-  if (rule.max_amount !== null && abs > rule.max_amount) return false;
-  const fields =
-    rule.match_field === "merchant"
-      ? [input.merchant_raw, input.merchant?.name]
-      : rule.match_field === "description"
-        ? [input.description]
-        : [input.merchant_raw, input.merchant?.name, input.description];
-  const pattern = foldText(rule.pattern.trim());
-  if (!pattern) return false;
-  return fields.some((f) => {
-    if (!f) return false;
-    const value = foldText(f);
-    switch (rule.match_type) {
-      case "equals":
-        return value.trim() === pattern;
-      case "starts_with":
-        return value.trim().startsWith(pattern);
-      case "regex":
-        try {
-          return new RegExp(rule.pattern, "i").test(f);
-        } catch {
-          return false;
-        }
-      default:
-        return value.includes(pattern);
-    }
-  });
 }
 
 // ---------------------------------------------------------------------------

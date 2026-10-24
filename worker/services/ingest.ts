@@ -8,7 +8,7 @@ import { sha256Hex } from "../lib/crypto";
 import { isOtpMessage, parseBankMessage } from "./parser";
 import { aiBlocked, structuredCall } from "./ai";
 import { setSetting } from "./settings";
-import { createContext, createTransaction, matchOwnTransfer, resolveAccount } from "./transactions";
+import { createContext, createTransaction, resolveAccount, suggestTransferPair } from "./transactions";
 import { convert } from "./fx";
 import { localDate, parseAmount } from "@shared/money";
 
@@ -144,10 +144,12 @@ export async function processMessage(
       source: "sms",
       external_ref: externalRef,
       type: parsed.type,
+      message: body,
     },
     ctx,
   );
-  if (parsed.type === "transfer_in" || parsed.type === "transfer_out") await matchOwnTransfer(env.DB, ctx.idx, created.id);
+  // Possibly money moved between the owner's own cards: label it as a suggestion (nothing is changed).
+  if (!created.duplicate && ["transfer_in", "transfer_out", "income"].includes(parsed.type)) await suggestTransferPair(env.DB, created.id);
 
   await run(
     env.DB,

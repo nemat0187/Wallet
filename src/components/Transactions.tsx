@@ -1,12 +1,14 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Sparkles, MessageSquareText, Trash2, EyeOff } from "lucide-react";
+import { Sparkles, MessageSquareText, Trash2, EyeOff, Check, ArrowLeftRight, ListFilter } from "lucide-react";
 import type { Transaction, TxKind } from "@shared/types";
 import { formatDay, formatMoney } from "@shared/money";
 import { del, get, patch } from "../lib/api";
 import { useAccounts, useCategories, useRefresh } from "../lib/data";
 import { Button, ErrorNote, Label, Segmented, Sheet, Spinner, Toggle, clsx, errorText, useToast } from "../lib/ui";
 import { CategoryPicker } from "./CategoryPicker";
+import { PairSummary, usePairActions } from "./Transfers";
+import { RuleEditor, ruleFromTransaction } from "./RuleEditor";
 
 export function CategoryIcon({ id, size = 40 }: { id: number | null; size?: number }) {
   const cats = useCategories();
@@ -31,16 +33,42 @@ function localTime(iso: string, offsetMin: number): string {
   return `${String(d.getUTCHours()).padStart(2, "0")}:${String(d.getUTCMinutes()).padStart(2, "0")}`;
 }
 
-export function TxRow({ t, onClick, tz = 240, showDate }: { t: Transaction; onClick: () => void; tz?: number; showDate?: boolean }) {
+export function TxRow({
+  t,
+  onClick,
+  tz = 240,
+  showDate,
+  selected,
+}: {
+  t: Transaction;
+  onClick: () => void;
+  tz?: number;
+  showDate?: boolean;
+  /** undefined = not in selection mode */
+  selected?: boolean;
+}) {
   const cats = useCategories();
   const accounts = useAccounts();
   const cat = cats.info(t.category_id);
   const account = t.account_id ? accounts.byId.get(t.account_id) : null;
+  const possibleTransfer = Boolean(t.pair_id) && t.kind !== "transfer";
   return (
     <button
       onClick={onClick}
-      className="flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-surface-2 sm:px-4"
+      aria-pressed={selected}
+      className={clsx("flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors hover:bg-surface-2 sm:px-4", selected && "bg-accent-soft hover:bg-accent-soft")}
     >
+      {selected !== undefined && (
+        <span
+          className={clsx(
+            "flex h-5 w-5 shrink-0 items-center justify-center rounded-md border",
+            selected ? "border-accent bg-accent text-accent-ink" : "border-line bg-surface",
+          )}
+          aria-hidden
+        >
+          {selected && <Check size={14} strokeWidth={3} />}
+        </span>
+      )}
       <CategoryIcon id={t.category_id} />
       <span className="min-w-0 flex-1">
         <span className="flex items-center gap-1.5">
@@ -49,6 +77,11 @@ export function TxRow({ t, onClick, tz = 240, showDate }: { t: Transaction; onCl
             <Sparkles size={14} className="shrink-0 text-warn" aria-label="Category guessed by AI — please check" />
           ) : null}
           {t.excluded ? <EyeOff size={14} className="shrink-0 text-ink-3" aria-label="Not counted in statistics" /> : null}
+          {possibleTransfer && (
+            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-accent-soft px-1.5 text-[12px] font-medium leading-5 text-accent" title="Looks like a transfer between your own cards">
+              <ArrowLeftRight size={11} aria-hidden /> own transfer?
+            </span>
+          )}
         </span>
         <span className="block truncate text-[13px] text-ink-3">
           {cat?.name ?? "Uncategorized"}
@@ -69,7 +102,18 @@ export function TxRow({ t, onClick, tz = 240, showDate }: { t: Transaction; onCl
 }
 
 /** Day-grouped transaction list with a daily total. */
-export function TxList({ items, onOpen, tz }: { items: Transaction[]; onOpen: (t: Transaction) => void; tz: number }) {
+export function TxList({
+  items,
+  onOpen,
+  tz,
+  selected,
+}: {
+  items: Transaction[];
+  onOpen: (t: Transaction) => void;
+  tz: number;
+  /** When set, rows show a checkbox and clicking toggles instead of opening. */
+  selected?: Set<number>;
+}) {
   const groups: { date: string; items: Transaction[]; spent: number }[] = [];
   for (const t of items) {
     let g = groups[groups.length - 1];
@@ -87,7 +131,7 @@ export function TxList({ items, onOpen, tz }: { items: Transaction[]; onOpen: (t
           </div>
           <div className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
             {g.items.map((t) => (
-              <TxRow key={t.id} t={t} tz={tz} onClick={() => onOpen(t)} />
+              <TxRow key={t.id} t={t} tz={tz} onClick={() => onOpen(t)} selected={selected ? selected.has(t.id) : undefined} />
             ))}
           </div>
         </div>
@@ -107,17 +151,31 @@ export function dayLabel(ymd: string): string {
   return `${weekday}, ${formatDay(ymd, ymd.slice(0, 4) !== String(today.getFullYear()))}`;
 }
 
-type Detail = Transaction & { message: { id: number; body: string; received_at: string; parse_method: string } | null };
+type Detail = Transaction & { message: { id: number; body: string; received_at: string; parse_method: string } | null; pair: Transaction | null };
 
 export function TxEditor({ tx, onClose }: { tx: Transaction | null; onClose: () => void }) {
+  const [ruleFrom, setRuleFrom] = useState<Transaction | null>(null);
   return (
-    <Sheet open={Boolean(tx)} onClose={onClose} title="Transaction">
-      {tx && <EditorBody key={tx.id} tx={tx} onClose={onClose} />}
-    </Sheet>
+    <>
+      <Sheet open={Boolean(tx)} onClose={onClose} title="Transaction">
+        {tx && (
+          <EditorBody
+            key={tx.id}
+            tx={tx}
+            onClose={onClose}
+            onMakeRule={() => {
+              setRuleFrom(tx);
+              onClose();
+            }}
+          />
+        )}
+      </Sheet>
+      {ruleFrom && <RuleEditor initial={ruleFromTransaction(ruleFrom)} onClose={() => setRuleFrom(null)} />}
+    </>
   );
 }
 
-function EditorBody({ tx, onClose }: { tx: Transaction; onClose: () => void }) {
+function EditorBody({ tx, onClose, onMakeRule }: { tx: Transaction; onClose: () => void; onMakeRule: () => void }) {
   const cats = useCategories();
   const accounts = useAccounts();
   const refresh = useRefresh();
@@ -133,16 +191,24 @@ function EditorBody({ tx, onClose }: { tx: Transaction; onClose: () => void }) {
   const [name, setName] = useState(txTitle(tx));
   const [accountId, setAccountId] = useState<number | null>(tx.account_id);
   const [showMessage, setShowMessage] = useState(false);
+  const [withPair, setWithPair] = useState(true);
+  const { mark, dismiss } = usePairActions();
   useEffect(() => setPicking(false), [categoryId]);
+  const pair = detail.data?.pair ?? null;
+  // The counterpart follows along only while both sides are in the same state.
+  const pairFollows = pair !== null && (pair.kind === "transfer") === (tx.kind === "transfer");
 
   const save = useMutation({
     mutationFn: async () => {
       const body: Record<string, unknown> = {};
-      if (categoryId !== tx.category_id && categoryId) {
+      if (categoryId !== tx.category_id && categoryId && kind !== "transfer") {
         body.category_id = categoryId;
         body.apply_to_merchant = Boolean(tx.merchant_id) && applyAll;
       }
-      if (kind !== tx.kind) body.kind = kind;
+      if (kind !== tx.kind) {
+        body.kind = kind;
+        if (pairFollows && withPair && (kind === "transfer" || tx.kind === "transfer")) body.include_pair = true;
+      }
       if (note !== (tx.note ?? "")) body.note = note || null;
       if (tags !== (tx.tags ?? "")) body.tags = tags || null;
       if (excluded !== Boolean(tx.excluded)) body.excluded = excluded;
@@ -153,7 +219,8 @@ function EditorBody({ tx, onClose }: { tx: Transaction; onClose: () => void }) {
       return patch<{ applied_to_others: number }>(`/transactions/${tx.id}`, body);
     },
     onSuccess: (r) => {
-      toast(r.applied_to_others > 1 ? `Saved · updated ${r.applied_to_others} transactions from this merchant` : "Saved");
+      const both = pairFollows && withPair && kind !== tx.kind && (kind === "transfer" || tx.kind === "transfer");
+      toast(r.applied_to_others > 1 ? `Saved · updated ${r.applied_to_others} transactions from this merchant` : both ? "Saved both sides of the transfer" : "Saved");
       refresh();
       onClose();
     },
@@ -194,11 +261,48 @@ function EditorBody({ tx, onClose }: { tx: Transaction; onClose: () => void }) {
         </p>
       ) : null}
 
+      {pair && tx.kind !== "transfer" && pair.kind !== "transfer" && (
+        <div className="rounded-xl bg-accent-soft px-3 py-3">
+          <p className="flex items-start gap-2 text-sm">
+            <ArrowLeftRight size={16} className="mt-0.5 shrink-0 text-accent" aria-hidden />
+            <span>
+              {tx.amount < 0 ? "The same amount arrived on your other card" : "The same amount left your other card"} right then. Was this money moved between your
+              own cards?
+            </span>
+          </p>
+          <div className="mt-2 rounded-lg bg-surface px-3 py-2">
+            <PairSummary out={tx.amount < 0 ? tx : pair} into={tx.amount < 0 ? pair : tx} />
+          </div>
+          <div className="mt-2 flex gap-2">
+            <Button
+              size="sm"
+              variant="primary"
+              className="flex-1"
+              loading={mark.isPending}
+              onClick={() => mark.mutate([tx.id, pair.id], { onSuccess: onClose })}
+            >
+              Yes, my transfer
+            </Button>
+            <Button size="sm" className="flex-1" loading={dismiss.isPending} onClick={() => dismiss.mutate(tx.id)}>
+              Not a transfer
+            </Button>
+          </div>
+        </div>
+      )}
+
       <label className="block">
         <Label>Merchant</Label>
         <input className="field" value={name} onChange={(e) => setName(e.target.value)} />
       </label>
 
+      {kind === "transfer" ? (
+        <div>
+          <Label>Category</Label>
+          <p className="field flex items-center gap-3 text-ink-2">
+            <ArrowLeftRight size={18} className="text-accent" aria-hidden /> Between my accounts
+          </p>
+        </div>
+      ) : (
       <div>
         <Label
           hint={
@@ -237,6 +341,7 @@ function EditorBody({ tx, onClose }: { tx: Transaction; onClose: () => void }) {
           />
         ) : null}
       </div>
+      )}
 
       <div>
         <Label>Type</Label>
@@ -246,10 +351,22 @@ function EditorBody({ tx, onClose }: { tx: Transaction; onClose: () => void }) {
           options={[
             { value: "expense", label: "Expense" },
             { value: "income", label: "Income" },
-            { value: "transfer", label: "Transfer" },
+            { value: "transfer", label: "Between my cards" },
           ]}
         />
-        {kind === "transfer" && <p className="mt-1.5 text-sm text-ink-3">Transfers between your own accounts don't count as spending or income.</p>}
+        {kind === "transfer" ? (
+          <p className="mt-1.5 text-sm text-ink-3">Money moved between your own cards or accounts. It doesn't count as spending, income or against budgets.</p>
+        ) : tx.kind === "transfer" ? (
+          <p className="mt-1.5 text-sm text-ink-3">It will count as {kind === "income" ? "income" : "spending"} again.</p>
+        ) : null}
+        {pairFollows && kind !== tx.kind && (kind === "transfer" || tx.kind === "transfer") && (
+          <Toggle
+            checked={withPair}
+            onChange={setWithPair}
+            label={`Also change the other side (${formatMoney(pair.amount, pair.currency, { sign: pair.amount > 0 })})`}
+            hint="The matching transaction on your other card."
+          />
+        )}
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2">
@@ -288,6 +405,10 @@ function EditorBody({ tx, onClose }: { tx: Transaction; onClose: () => void }) {
         )}
         {detail.isLoading && <Spinner />}
       </div>
+
+      <button type="button" onClick={onMakeRule} className="flex items-center gap-2 self-start text-sm font-medium text-accent">
+        <ListFilter size={16} aria-hidden /> Create a rule from this transaction
+      </button>
 
       <ErrorNote error={save.error} />
       <div className="flex gap-2">

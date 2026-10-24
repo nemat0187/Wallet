@@ -59,6 +59,11 @@ export interface Transaction {
   excluded: number;
   balance_after: number | null;
   source: TxSource;
+  /** What the bank message said it was: purchase, transfer_in, transfer_out, cash_withdrawal, … */
+  tx_type: string | null;
+  /** Suggested counterpart when this looks like a transfer between the owner's own cards. */
+  /** Suggested counterpart on another of the owner's cards; 0 = owner said "not a transfer". */
+  pair_id: number | null;
   created_at: string;
 }
 
@@ -91,6 +96,12 @@ export interface Rule {
   priority: number;
   enabled: number;
   hits: number;
+  /** JSON array of conditions (see shared/rules.ts); null for rules created by older versions. */
+  conditions: string | null;
+  match_mode: "all" | "any";
+  set_tags: string | null;
+  set_note: string | null;
+  continue_after: number;
 }
 
 export interface BudgetStatus {

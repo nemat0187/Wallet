@@ -3,8 +3,9 @@
 import type { Env } from "../env";
 import type { Account, ParsedMessage, Rule, Settings, TxKind, TxSource } from "@shared/types";
 import { localDate } from "@shared/money";
-import { all, first, insert, nowIso, run } from "../lib/db";
-import { categorize, loadCategories, upsertMerchant, type CategoryIndex } from "./categorize";
+import { applyRules, localParts, mergeTags } from "@shared/rules";
+import { all, first, insert, nowIso, placeholders, run } from "../lib/db";
+import { categorize, fallback, loadCategories, upsertMerchant, type CategoryIndex } from "./categorize";
 import { convert } from "./fx";
 import { getSettings } from "./settings";
 
@@ -23,6 +24,8 @@ export interface NewTransaction {
   source: TxSource;
   external_ref?: string | null;
   type: ParsedMessage["type"];
+  /** Full bank notification text, so rules can look at it. */
+  message?: string | null;
   category_id?: number | null; // explicit choice (manual entry / import mapping)
   kind?: TxKind;
 }
@@ -68,36 +71,67 @@ export async function createTransaction(env: Env, tx: NewTransaction, ctx: Creat
   let merchantName = merchant?.name ?? null;
   let excluded = false;
   let needsAi = false;
+  let note = tx.note ?? null;
+  let tags = tx.tags ?? null;
   if (tx.category_id && ctx.idx.byId.has(tx.category_id)) {
     categoryId = tx.category_id;
     source = "user";
     kind = tx.kind ?? ctx.idx.byId.get(tx.category_id)!.kind;
   } else {
-    const result = await categorize(
+    const auto = await categorize(
       db,
       ctx.idx,
-      {
-        merchant,
-        merchant_raw: merchantText,
-        description: tx.description ?? null,
-        amount: tx.amount,
-        account_id: tx.account_id,
-        type: tx.type,
-      },
-      { atmAsTransfer: ctx.settings.atm_as_transfer, rules: ctx.rules },
+      { merchant, merchant_raw: merchantText, description: tx.description ?? null, amount: tx.amount, account_id: tx.account_id, type: tx.type },
+      { atmAsTransfer: ctx.settings.atm_as_transfer },
     );
-    categoryId = result.category_id;
+    categoryId = auto.category_id;
     // "pending" = fallback category for now; AI will look at this merchant shortly.
-    source = result.needs_ai ? "pending" : result.category_source;
-    kind = tx.kind ?? result.kind;
-    merchantName = result.merchant_name;
-    excluded = result.excluded;
-    needsAi = result.needs_ai;
-    if (result.rule_id) await run(db, "UPDATE rules SET hits = hits + 1 WHERE id = ?", result.rule_id);
+    source = auto.needs_ai ? "pending" : auto.category_source;
+    kind = tx.kind ?? auto.kind;
+    merchantName = auto.merchant_name;
+    needsAi = auto.needs_ai;
+
+    // The owner's rules run on top of the automatic result and always win.
+    const { weekday, hour } = localParts(occurred.toISOString(), ctx.settings.tz_offset_minutes);
+    const autoCat = ctx.idx.byId.get(categoryId);
+    const fx = applyRules(ctx.rules, {
+      merchant: merchantName,
+      merchant_raw: merchantText,
+      description: tx.description ?? null,
+      message: tx.message ?? null,
+      amount: tx.amount,
+      currency: tx.orig_currency ?? tx.currency,
+      account_id: tx.account_id,
+      type: tx.type,
+      local_weekday: weekday,
+      local_hour: hour,
+      category_id: categoryId,
+      category_parent_id: autoCat?.parent_id ?? null,
+    });
+    if (fx.rule_ids.length) {
+      const ruleCat = fx.category_id ? ctx.idx.byId.get(fx.category_id) : undefined;
+      if (ruleCat) {
+        categoryId = ruleCat.id;
+        kind = fx.kind ?? ruleCat.kind;
+        source = "rule";
+        needsAi = false;
+      } else if (fx.kind && fx.kind !== kind) {
+        // Type changed without a category: use the matching default (e.g. "between my accounts").
+        kind = fx.kind;
+        categoryId = fx.kind === "transfer" ? (ctx.idx.bySlug.get("transfer.own")?.id ?? fallback(ctx.idx, "transfer")) : fallback(ctx.idx, fx.kind);
+        source = "rule";
+        needsAi = false;
+      }
+      if (fx.merchant_name) merchantName = fx.merchant_name;
+      if (fx.excluded !== null) excluded = fx.excluded;
+      if (fx.note && !note) note = fx.note;
+      tags = mergeTags(tags, fx.tags);
+      await run(db, `UPDATE rules SET hits = hits + 1 WHERE id IN (${placeholders(fx.rule_ids.length)})`, ...fx.rule_ids);
+    }
   }
 
   // A rule may rename the merchant; keep that on the merchant record too.
-  if (merchant && merchantName && merchantName !== merchant.name && source === "rule") {
+  if (merchant && merchantName && merchantName !== merchant.name) {
     await run(db, "UPDATE merchants SET name = ?, updated_at = ? WHERE id = ?", merchantName, nowIso(), merchant.id);
   }
 
@@ -106,8 +140,8 @@ export async function createTransaction(env: Env, tx: NewTransaction, ctx: Creat
     db,
     `INSERT INTO transactions (account_id, occurred_at, local_date, amount, currency, amount_base, orig_amount, orig_currency,
        kind, merchant_raw, merchant_id, description, category_id, category_source, note, tags, excluded, balance_after,
-       source, external_ref, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+       source, external_ref, tx_type, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     tx.account_id,
     occurred.toISOString(),
     ymd,
@@ -122,12 +156,13 @@ export async function createTransaction(env: Env, tx: NewTransaction, ctx: Creat
     tx.description ?? null,
     categoryId,
     source,
-    tx.note ?? null,
-    tx.tags ?? null,
+    note,
+    tags,
     excluded ? 1 : 0,
     tx.balance_after ?? null,
     tx.source,
     tx.external_ref ?? null,
+    tx.type,
     now,
     now,
   );
@@ -175,48 +210,64 @@ export async function resolveAccount(db: D1Database, last4: string | null, curre
 }
 
 /**
- * Money moved between two of the owner's own cards shows up as an outgoing and
- * an incoming transfer of the same amount within minutes. Mark both as internal
- * transfers so they don't count as spending or income.
+ * Money moved between two of the owner's own cards shows up as an outgoing and an
+ * incoming transaction of the same amount within minutes. The bank message doesn't
+ * name the other side, so this is only a *suggestion*: both get a pair_id (shown as
+ * a label with a one-tap "Mark as my transfer"); nothing changes until the owner says so.
+ * Exception: when the owner (or one of their rules) already marked one side as a
+ * transfer between their cards, the other side follows.
+ * Returns the id of the suggested counterpart, if any.
  */
-export async function matchOwnTransfer(db: D1Database, idx: CategoryIndex, txId: number): Promise<boolean> {
-  const tx = await first<{ id: number; account_id: number | null; amount_base: number; occurred_at: string; kind: string }>(
+export async function suggestTransferPair(db: D1Database, txId: number, windowMinutes = 30): Promise<number | null> {
+  const tx = await first<{ id: number; account_id: number | null; amount_base: number; occurred_at: string; kind: string; pair_id: number | null; tx_type: string | null }>(
     db,
-    "SELECT id, account_id, amount_base, occurred_at, kind FROM transactions WHERE id = ?",
+    "SELECT id, account_id, amount_base, occurred_at, kind, pair_id, tx_type FROM transactions WHERE id = ?",
     txId,
   );
-  if (!tx || !tx.account_id) return false;
+  // pair_id 0 means the owner said "not a transfer"; never suggest it again.
+  if (!tx || !tx.account_id || tx.pair_id !== null || tx.amount_base === 0 || tx.tx_type === "cash_withdrawal") return null;
   const t = Date.parse(tx.occurred_at);
-  const from = new Date(t - 15 * 60_000).toISOString();
-  const to = new Date(t + 15 * 60_000).toISOString();
-  const other = await first<{ id: number }>(
+  const other = await first<{ id: number; kind: string }>(
     db,
-    `SELECT t.id FROM transactions t JOIN categories c ON c.id = t.category_id
-      WHERE t.id <> ? AND t.account_id IS NOT NULL AND t.account_id <> ? AND t.amount_base = ?
-        AND t.occurred_at BETWEEN ? AND ? AND c.slug IN ('income.transfer', 'people', 'transfer.own')
+    `SELECT t.id, t.kind FROM transactions t JOIN accounts a ON a.id = t.account_id
+      WHERE t.id <> ? AND t.account_id <> ? AND a.type <> 'cash' AND t.amount_base = ? AND t.pair_id IS NULL
+        AND COALESCE(t.tx_type, '') <> 'cash_withdrawal' AND t.occurred_at BETWEEN ? AND ?
       ORDER BY ABS(julianday(t.occurred_at) - julianday(?)) LIMIT 1`,
     tx.id,
     tx.account_id,
     -tx.amount_base,
-    from,
-    to,
+    new Date(t - windowMinutes * 60_000).toISOString(),
+    new Date(t + windowMinutes * 60_000).toISOString(),
     tx.occurred_at,
   );
-  const own = idx.bySlug.get("transfer.own");
-  if (!other || !own) return false;
-  const self = await first<{ slug: string | null }>(
+  if (!other) return null;
+  const stmts = [
+    db.prepare("UPDATE transactions SET pair_id = ? WHERE id = ?").bind(other.id, tx.id),
+    db.prepare("UPDATE transactions SET pair_id = ? WHERE id = ?").bind(tx.id, other.id),
+  ];
+  if ((tx.kind === "transfer") !== (other.kind === "transfer")) {
+    stmts.push(
+      db
+        .prepare(
+          `UPDATE transactions SET kind = 'transfer', category_id = COALESCE((SELECT id FROM categories WHERE slug = 'transfer.own'), category_id),
+             category_source = 'rule', needs_review = 0, updated_at = ? WHERE id = ?`,
+        )
+        .bind(nowIso(), tx.kind === "transfer" ? other.id : tx.id),
+    );
+  }
+  await db.batch(stmts);
+  return other.id;
+}
+
+/** Look through history for unlabelled pairs (e.g. after importing statements). Returns how many pairs were found. */
+export async function scanTransferPairs(db: D1Database): Promise<number> {
+  const rows = await all<{ id: number }>(
     db,
-    "SELECT c.slug FROM transactions t JOIN categories c ON c.id = t.category_id WHERE t.id = ?",
-    tx.id,
+    `SELECT t.id FROM transactions t JOIN accounts a ON a.id = t.account_id
+      WHERE t.pair_id IS NULL AND t.kind <> 'transfer' AND t.amount_base < 0 AND a.type <> 'cash'
+      ORDER BY t.occurred_at DESC LIMIT 2000`,
   );
-  if (!self?.slug || !["income.transfer", "people", "transfer.own"].includes(self.slug)) return false;
-  await run(
-    db,
-    "UPDATE transactions SET kind = 'transfer', category_id = ?, category_source = 'default', updated_at = ? WHERE id IN (?, ?)",
-    own.id,
-    nowIso(),
-    tx.id,
-    other.id,
-  );
-  return true;
+  let found = 0;
+  for (const r of rows) if (await suggestTransferPair(db, r.id)) found++;
+  return found;
 }

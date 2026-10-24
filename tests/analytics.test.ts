@@ -1,8 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { detectRecurring } from "../worker/services/analytics";
 import { makeStatus } from "../worker/services/budgets";
-import { ruleMatches } from "../worker/services/categorize";
-import type { Rule } from "../shared/types";
 
 const row = (merchant_id: number, name: string, local_date: string, amount: number) => ({ merchant_id, name, category_id: null, local_date, amount });
 
@@ -42,23 +40,5 @@ describe("makeStatus", () => {
   it("flags budgets that are over", () => {
     expect(makeStatus(1, 5, 30000, 30100, 80, period, "2026-10-20").status).toBe("over");
     expect(makeStatus(1, 5, 30000, 5000, 80, period, "2026-10-20").status).toBe("ok");
-  });
-});
-
-describe("ruleMatches", () => {
-  const base: Rule = {
-    id: 1, name: null, match_field: "any", match_type: "contains", pattern: "ev sahibi", direction: null, min_amount: null, max_amount: null,
-    account_id: null, set_category_id: 1, set_kind: null, set_merchant_name: null, set_excluded: null, priority: 100, enabled: 1, hits: 0,
-  };
-  const tx = { merchant_raw: "Köçürmə: EV SAHİBİ", description: null, amount: -65000, account_id: 2, merchant: null };
-  it("matches case- and accent-insensitively", () => {
-    expect(ruleMatches(base, tx, "out")).toBe(true);
-  });
-  it("respects direction, amount and card limits", () => {
-    expect(ruleMatches({ ...base, direction: "in" }, tx, "out")).toBe(false);
-    expect(ruleMatches({ ...base, min_amount: 70000 }, tx, "out")).toBe(false);
-    expect(ruleMatches({ ...base, account_id: 3 }, tx, "out")).toBe(false);
-    expect(ruleMatches({ ...base, match_type: "regex", pattern: "EV\\s+SAH" }, tx, "out")).toBe(true);
-    expect(ruleMatches({ ...base, match_type: "regex", pattern: "([" }, tx, "out")).toBe(false);
   });
 });

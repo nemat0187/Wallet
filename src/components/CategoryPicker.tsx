@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { Search, Check } from "lucide-react";
+import { Search, Check, Plus, X } from "lucide-react";
 import type { CategoryKind } from "@shared/types";
 import { clsx } from "../lib/ui";
 import { useCategories } from "../lib/data";
@@ -102,5 +102,49 @@ function Option({
       <span className="flex-1">{label}</span>
       {selected && <Check size={16} className="text-accent" aria-hidden />}
     </button>
+  );
+}
+
+/** Several categories: chips for the chosen ones, and the searchable list to add more. */
+export function CategoryMultiPicker({ value, onChange, kinds }: { value: number[]; onChange: (ids: number[]) => void; kinds?: CategoryKind[] }) {
+  const cats = useCategories();
+  const [adding, setAdding] = useState(false);
+  return (
+    <div>
+      <div className="flex flex-wrap gap-2">
+        {value.map((id) => (
+          <span key={id} className="inline-flex items-center gap-1.5 rounded-full bg-surface-2 py-1 pl-3 pr-1.5 text-sm">
+            {cats.info(id)?.icon} {cats.info(id)?.path ?? "Deleted category"}
+            <button
+              type="button"
+              onClick={() => onChange(value.filter((x) => x !== id))}
+              className="rounded-full p-0.5 text-ink-3 hover:bg-line hover:text-ink"
+              aria-label={`Remove ${cats.info(id)?.name ?? "category"}`}
+            >
+              <X size={14} />
+            </button>
+          </span>
+        ))}
+        <button
+          type="button"
+          onClick={() => setAdding((a) => !a)}
+          className="inline-flex h-8 items-center gap-1 rounded-full border border-dashed border-line px-3 text-sm font-medium text-accent hover:bg-surface-2"
+        >
+          {adding ? "Done" : <><Plus size={14} /> {value.length ? "Add" : "Choose categories"}</>}
+        </button>
+      </div>
+      {adding && (
+        <div className="mt-2">
+          <CategoryPicker
+            value={null}
+            kinds={kinds}
+            onChange={(id) => {
+              if (!value.includes(id)) onChange([...value, id]);
+            }}
+          />
+          <p className="mt-1.5 text-[13px] text-ink-3">A main category includes all its subcategories.</p>
+        </div>
+      )}
+    </div>
   );
 }

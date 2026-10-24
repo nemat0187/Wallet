@@ -18,6 +18,7 @@ import analyticsRoutes from "./routes/analytics";
 import aiRoutes from "./routes/ai";
 import importRoutes from "./routes/imports";
 import settingsRoutes, { telegramWebhook } from "./routes/settings";
+import dashboardRoutes from "./routes/dashboards";
 
 const app = new Hono<AppEnv>();
 
@@ -66,6 +67,7 @@ app.route("/api", catalogRoutes);
 app.route("/api/accounts", accountRoutes);
 app.route("/api/budgets", budgetRoutes);
 app.route("/api/analytics", analyticsRoutes);
+app.route("/api/dashboards", dashboardRoutes);
 app.route("/api/ai", aiRoutes);
 app.route("/api/import", importRoutes);
 app.route("/api", settingsRoutes);

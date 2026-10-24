@@ -9,6 +9,8 @@ import { useBootstrap, useCategories } from "../lib/data";
 import { Empty, Money, Section, Spinner, clsx } from "../lib/ui";
 import { BarList, Meter, PaceChart } from "../components/charts";
 import { TxEditor, TxList } from "../components/Transactions";
+import { HomeDashboards } from "../components/HomeDashboards";
+import { TransferPairsBanner } from "../components/Transfers";
 
 interface DashboardData {
   period: { start: string; end: string; label: string; is_current: boolean; elapsed_days: number; total_days: number };
@@ -150,6 +152,7 @@ export default function Dashboard() {
           </section>
 
           <Attention review={d.counts.review} failed={d.counts.failed} />
+          <TransferPairsBanner className="mt-2" />
 
           <Section
             title="Where it went"
@@ -279,6 +282,7 @@ export default function Dashboard() {
           )}
         </aside>
       </div>
+      <HomeDashboards today={today} monthStartDay={startDay} />
       <TxEditor tx={open} onClose={() => setOpen(null)} />
     </div>
   );

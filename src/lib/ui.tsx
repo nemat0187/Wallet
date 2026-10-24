@@ -154,6 +154,37 @@ export function Segmented<T extends string>({
   );
 }
 
+/** Pill-shaped toggle used for filters and quick choices. */
+export function Chip({
+  active,
+  onClick,
+  children,
+  disabled,
+  className,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+  disabled?: boolean;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      disabled={disabled}
+      className={clsx(
+        "h-9 shrink-0 rounded-full border px-3.5 text-sm font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40",
+        active ? "border-accent bg-accent-soft text-ink" : "border-line bg-surface text-ink-2 hover:text-ink",
+        className,
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
 export function Label({ children, hint }: { children: ReactNode; hint?: ReactNode }) {
   return (
     <span className="mb-1.5 block text-sm font-medium text-ink-2">

@@ -6,7 +6,9 @@ import type { AppEnv } from "../env";
 import type { Category, Merchant, Rule } from "@shared/types";
 import { badRequest, body, intParam, notFound } from "../lib/http";
 import { all, first, insert, nowIso, run, type SqlValue } from "../lib/db";
-import { loadCategories, ruleMatches, setMerchantCategory } from "../services/categorize";
+import { defaultCategoryFor, loadCategories, setMerchantCategory, type CategoryIndex } from "../services/categorize";
+import { getSettings } from "../services/settings";
+import { localParts, mergeTags, ruleMatches, type RuleContext } from "@shared/rules";
 
 const app = new Hono<AppEnv>();
 
@@ -146,73 +148,117 @@ app.patch("/merchants/:id", async (c) => {
 
 app.get("/rules", async (c) => c.json(await all<Rule>(c.env.DB, "SELECT * FROM rules ORDER BY priority, id")));
 
+const ConditionSchema = z.union([
+  z.object({
+    field: z.enum(["merchant", "description", "message", "any_text"]),
+    op: z.enum(["contains", "not_contains", "equals", "starts_with", "ends_with", "regex"]),
+    value: z.string().max(200),
+  }),
+  z.object({
+    field: z.literal("amount"),
+    op: z.enum(["eq", "ne", "gt", "gte", "lt", "lte", "between"]),
+    value: z.number().int().min(0),
+    value2: z.number().int().min(0).nullable().optional(),
+  }),
+  z.object({ field: z.literal("direction"), op: z.literal("is"), value: z.enum(["in", "out"]) }),
+  z.object({
+    field: z.enum(["account", "type", "weekday", "currency", "category"]),
+    op: z.enum(["is", "is_not"]),
+    value: z.array(z.union([z.number(), z.string().max(40)])).min(1).max(100),
+  }),
+  z.object({ field: z.literal("hour"), op: z.literal("between"), value: z.number().int().min(0).max(23), value2: z.number().int().min(0).max(23) }),
+]);
+
 const RuleInput = z.object({
   name: z.string().max(80).nullable().optional(),
-  match_field: z.enum(["merchant", "description", "any"]).default("any"),
-  match_type: z.enum(["contains", "equals", "starts_with", "regex"]).default("contains"),
-  pattern: z.string().trim().min(1).max(200),
-  direction: z.enum(["in", "out"]).nullable().optional(),
-  min_amount: z.number().int().nullable().optional(),
-  max_amount: z.number().int().nullable().optional(),
-  account_id: z.number().int().nullable().optional(),
+  conditions: z.array(ConditionSchema).min(1).max(20),
+  match_mode: z.enum(["all", "any"]).default("all"),
   set_category_id: z.number().int().nullable().optional(),
   set_kind: z.enum(["expense", "income", "transfer"]).nullable().optional(),
   set_merchant_name: z.string().max(80).nullable().optional(),
   set_excluded: z.boolean().nullable().optional(),
-  priority: z.number().int().default(100),
+  set_tags: z.string().max(200).nullable().optional(),
+  set_note: z.string().max(300).nullable().optional(),
+  continue_after: z.boolean().default(false),
+  priority: z.number().int().optional(),
   enabled: z.boolean().default(true),
 });
+type RuleBody = z.infer<typeof RuleInput>;
 
-function validateRegex(input: { match_type?: string; pattern?: string }) {
-  if (input.match_type === "regex" && input.pattern) {
-    try {
-      new RegExp(input.pattern, "i");
-    } catch {
-      badRequest("The pattern is not a valid regular expression");
+function validateRule(r: RuleBody) {
+  for (const cond of r.conditions) {
+    if ("op" in cond && cond.op === "regex") {
+      try {
+        new RegExp(cond.value as string, "i");
+      } catch {
+        badRequest("A pattern is not a valid regular expression");
+      }
     }
+    if (cond.field === "amount" && cond.op === "between" && (cond.value2 === null || cond.value2 === undefined)) badRequest("Enter both amounts for “between”");
   }
+  if (!r.set_category_id && !r.set_kind && !r.set_merchant_name && r.set_excluded == null && !r.set_tags?.trim() && !r.set_note?.trim()) {
+    badRequest("A rule must change something");
+  }
+}
+
+/** Store a rule; the legacy single-condition columns get a readable summary of the first text condition. */
+function ruleColumns(r: RuleBody): Record<string, SqlValue> {
+  const firstText = r.conditions.find((x) => typeof x.value === "string" && "op" in x && x.field !== "direction") as { value: string } | undefined;
+  return {
+    name: r.name ?? null,
+    pattern: firstText?.value ?? "",
+    match_field: "any",
+    match_type: "contains",
+    direction: null,
+    min_amount: null,
+    max_amount: null,
+    account_id: null,
+    conditions: JSON.stringify(r.conditions),
+    match_mode: r.match_mode,
+    set_category_id: r.set_category_id ?? null,
+    set_kind: r.set_kind ?? null,
+    set_merchant_name: r.set_merchant_name?.trim() || null,
+    set_excluded: r.set_excluded == null ? null : r.set_excluded ? 1 : 0,
+    set_tags: r.set_tags?.trim() || null,
+    set_note: r.set_note?.trim() || null,
+    continue_after: r.continue_after ? 1 : 0,
+    enabled: r.enabled ? 1 : 0,
+  };
 }
 
 app.post("/rules", async (c) => {
   const r = await body(c, RuleInput);
-  validateRegex(r);
-  if (!r.set_category_id && !r.set_kind && !r.set_merchant_name && r.set_excluded == null) badRequest("A rule must change something");
-  const id = await insert(
-    c.env.DB,
-    `INSERT INTO rules (name, match_field, match_type, pattern, direction, min_amount, max_amount, account_id, set_category_id,
-       set_kind, set_merchant_name, set_excluded, priority, enabled, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    r.name ?? null,
-    r.match_field,
-    r.match_type,
-    r.pattern,
-    r.direction ?? null,
-    r.min_amount ?? null,
-    r.max_amount ?? null,
-    r.account_id ?? null,
-    r.set_category_id ?? null,
-    r.set_kind ?? null,
-    r.set_merchant_name ?? null,
-    r.set_excluded == null ? null : r.set_excluded ? 1 : 0,
-    r.priority,
-    r.enabled ? 1 : 0,
-    nowIso(),
-  );
+  validateRule(r);
+  const cols = ruleColumns(r);
+  const max = await first<{ p: number | null }>(c.env.DB, "SELECT MAX(priority) AS p FROM rules");
+  cols.priority = r.priority ?? (max?.p ?? 0) + 10;
+  cols.created_at = nowIso();
+  const keys = Object.keys(cols);
+  const id = await insert(c.env.DB, `INSERT INTO rules (${keys.join(", ")}) VALUES (${keys.map(() => "?").join(", ")})`, ...Object.values(cols));
   return c.json({ id });
 });
 
-app.patch("/rules/:id", async (c) => {
+app.put("/rules/:id", async (c) => {
   const id = intParam(c, "id");
-  const r = await body(c, RuleInput.partial());
-  validateRegex(r);
-  const sets: string[] = [];
-  const params: SqlValue[] = [];
-  for (const [k, v] of Object.entries(r)) {
-    if (v === undefined) continue;
-    sets.push(`${k} = ?`);
-    params.push(typeof v === "boolean" ? (v ? 1 : 0) : (v as SqlValue));
-  }
-  if (sets.length) await run(c.env.DB, `UPDATE rules SET ${sets.join(", ")} WHERE id = ?`, ...params, id);
+  const r = await body(c, RuleInput);
+  validateRule(r);
+  const cols = ruleColumns(r);
+  if (r.priority !== undefined) cols.priority = r.priority;
+  await run(c.env.DB, `UPDATE rules SET ${Object.keys(cols).map((k) => `${k} = ?`).join(", ")} WHERE id = ?`, ...Object.values(cols), id);
+  return c.json({ ok: true });
+});
+
+/** Turn a rule on/off without resending it. */
+app.patch("/rules/:id", async (c) => {
+  const { enabled } = await body(c, z.object({ enabled: z.boolean() }));
+  await run(c.env.DB, "UPDATE rules SET enabled = ? WHERE id = ?", enabled ? 1 : 0, intParam(c, "id"));
+  return c.json({ ok: true });
+});
+
+/** Save a new order (array of rule ids, first = checked first). */
+app.post("/rules/reorder", async (c) => {
+  const { ids } = await body(c, z.object({ ids: z.array(z.number().int()).max(500) }));
+  if (ids.length) await c.env.DB.batch(ids.map((id, i) => c.env.DB.prepare("UPDATE rules SET priority = ? WHERE id = ?").bind((i + 1) * 10, id)));
   return c.json({ ok: true });
 });
 
@@ -221,43 +267,129 @@ app.delete("/rules/:id", async (c) => {
   return c.json({ ok: true });
 });
 
-/** Apply a rule to existing transactions (preview with ?dry=1). */
+interface TxForRules {
+  id: number;
+  local_date: string;
+  occurred_at: string;
+  amount: number;
+  currency: string;
+  orig_currency: string | null;
+  account_id: number | null;
+  merchant_raw: string | null;
+  merchant_name: string | null;
+  merchant_id: number | null;
+  description: string | null;
+  message: string | null;
+  tx_type: string | null;
+  category_id: number | null;
+  kind: string;
+  tags: string | null;
+  note: string | null;
+}
+
+async function loadForRules(db: D1Database): Promise<TxForRules[]> {
+  return all<TxForRules>(
+    db,
+    `SELECT t.id, t.local_date, t.occurred_at, t.amount, t.currency, t.orig_currency, t.account_id, t.merchant_raw, m.name AS merchant_name,
+            t.merchant_id, t.description, r.body AS message, t.tx_type, t.category_id, t.kind, t.tags, t.note
+       FROM transactions t LEFT JOIN merchants m ON m.id = t.merchant_id LEFT JOIN raw_messages r ON r.transaction_id = t.id
+      ORDER BY t.occurred_at DESC LIMIT 20000`,
+  );
+}
+
+function contextFor(t: TxForRules, idx: CategoryIndex, tz: number): RuleContext {
+  const { weekday, hour } = localParts(t.occurred_at, tz);
+  return {
+    merchant: t.merchant_name,
+    merchant_raw: t.merchant_raw,
+    description: t.description,
+    message: t.message,
+    amount: t.amount,
+    currency: t.orig_currency ?? t.currency,
+    account_id: t.account_id,
+    type: t.tx_type,
+    local_weekday: weekday,
+    local_hour: hour,
+    category_id: t.category_id,
+    category_parent_id: t.category_id ? (idx.byId.get(t.category_id)?.parent_id ?? null) : null,
+  };
+}
+
+function asRule(r: RuleBody, id = 0): Rule {
+  const cols = ruleColumns(r);
+  return { ...(cols as unknown as Rule), id, priority: 0, hits: 0, enabled: 1 };
+}
+
+/** Preview: which existing transactions would a (possibly unsaved) rule match? */
+app.post("/rules/test", async (c) => {
+  const r = await body(c, z.object({ conditions: z.array(ConditionSchema).min(1).max(20), match_mode: z.enum(["all", "any"]).default("all") }));
+  const rule = asRule({ conditions: r.conditions, match_mode: r.match_mode, continue_after: false, enabled: true });
+  const [settings, idx, txs] = await Promise.all([getSettings(c.env), loadCategories(c.env.DB), loadForRules(c.env.DB)]);
+  const matched = txs.filter((t) => ruleMatches(rule, contextFor(t, idx, settings.tz_offset_minutes)));
+  return c.json({
+    matched: matched.length,
+    total: txs.length,
+    spent: matched.reduce((s, t) => s + (t.amount < 0 ? -t.amount : 0), 0),
+    sample: matched.slice(0, 25).map((t) => ({
+      id: t.id,
+      local_date: t.local_date,
+      amount: t.amount,
+      currency: t.currency,
+      merchant: t.merchant_name ?? t.merchant_raw ?? t.description,
+      category_id: t.category_id,
+    })),
+  });
+});
+
+/** Apply a saved rule to existing transactions. */
 app.post("/rules/:id/apply", async (c) => {
   const id = intParam(c, "id");
-  const dry = c.req.query("dry") === "1";
   const rule = await first<Rule>(c.env.DB, "SELECT * FROM rules WHERE id = ?", id);
   if (!rule) notFound();
-  // Narrow down in SQL first (LIKE is case-insensitive for ASCII), then check each candidate exactly.
-  const asciiPattern = rule.match_type !== "regex" && /^[\x20-\x7e]+$/.test(rule.pattern);
-  const like = `%${rule.pattern.replace(/[%_]/g, "")}%`;
-  const txs = await all<{ id: number; merchant_raw: string | null; description: string | null; amount: number; account_id: number | null; merchant_name: string | null }>(
-    c.env.DB,
-    `SELECT t.id, t.merchant_raw, t.description, t.amount, t.account_id, m.name AS merchant_name
-       FROM transactions t LEFT JOIN merchants m ON m.id = t.merchant_id
-      ${asciiPattern ? "WHERE t.merchant_raw LIKE ? OR t.description LIKE ? OR m.name LIKE ?" : ""}`,
-    ...(asciiPattern ? [like, like, like] : []),
-  );
-  const matched = txs.filter((t) =>
-    ruleMatches(rule, { ...t, merchant: t.merchant_name ? { name: t.merchant_name } : null }, t.amount >= 0 ? "in" : "out"),
-  );
-  if (dry) return c.json({ matched: matched.length });
-  const cat = rule.set_category_id ? await first<Category>(c.env.DB, "SELECT * FROM categories WHERE id = ?", rule.set_category_id) : null;
+  const [settings, idx, txs] = await Promise.all([getSettings(c.env), loadCategories(c.env.DB), loadForRules(c.env.DB)]);
+  const matched = txs.filter((t) => ruleMatches({ ...rule, enabled: 1 }, contextFor(t, idx, settings.tz_offset_minutes)));
   const now = nowIso();
-  const sets = ["updated_at = ?", "category_source = 'rule'", "needs_review = 0"];
-  const params: SqlValue[] = [now];
-  if (cat) {
-    sets.push("category_id = ?", "kind = ?");
-    params.push(cat.id, rule.set_kind ?? cat.kind);
-  } else if (rule.set_kind) {
-    sets.push("kind = ?");
-    params.push(rule.set_kind);
+  const cat = rule.set_category_id ? idx.byId.get(rule.set_category_id) : undefined;
+  const stmts: D1PreparedStatement[] = [];
+  const renamed = new Set<number>();
+  for (const t of matched) {
+    const sets: string[] = ["updated_at = ?"];
+    const params: SqlValue[] = [now];
+    let kind: string | null = null;
+    let categoryId: number | null = null;
+    if (cat) {
+      categoryId = cat.id;
+      kind = rule.set_kind ?? cat.kind;
+    } else if (rule.set_kind && rule.set_kind !== t.kind) {
+      kind = rule.set_kind;
+      categoryId =
+        rule.set_kind === "transfer"
+          ? (idx.bySlug.get("transfer.own")?.id ?? null)
+          : (defaultCategoryFor(idx, t.amount, t.tx_type)?.id ?? null);
+    }
+    if (categoryId) {
+      sets.push("category_id = ?", "kind = ?", "category_source = 'rule'", "needs_review = 0");
+      params.push(categoryId, kind);
+    }
+    if (rule.set_excluded !== null && rule.set_excluded !== undefined) {
+      sets.push("excluded = ?");
+      params.push(rule.set_excluded);
+    }
+    const tagList = (rule.set_tags ?? "").split(",").map((x) => x.trim()).filter(Boolean);
+    if (tagList.length) {
+      sets.push("tags = ?");
+      params.push(mergeTags(t.tags, tagList));
+    }
+    if (rule.set_note && !t.note) {
+      sets.push("note = ?");
+      params.push(rule.set_note);
+    }
+    stmts.push(c.env.DB.prepare(`UPDATE transactions SET ${sets.join(", ")} WHERE id = ?`).bind(...params, t.id));
+    if (rule.set_merchant_name && t.merchant_id && !renamed.has(t.merchant_id)) {
+      renamed.add(t.merchant_id);
+      stmts.push(c.env.DB.prepare("UPDATE merchants SET name = ?, updated_at = ? WHERE id = ?").bind(rule.set_merchant_name, now, t.merchant_id));
+    }
   }
-  if (rule.set_excluded !== null) {
-    sets.push("excluded = ?");
-    params.push(rule.set_excluded);
-  }
-  const update = c.env.DB.prepare(`UPDATE transactions SET ${sets.join(", ")} WHERE id = ?`);
-  const stmts = matched.map((t) => update.bind(...params, t.id));
   for (let i = 0; i < stmts.length; i += 100) await c.env.DB.batch(stmts.slice(i, i + 100));
   await run(c.env.DB, "UPDATE rules SET hits = hits + ? WHERE id = ?", matched.length, id);
   return c.json({ matched: matched.length });

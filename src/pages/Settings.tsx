@@ -289,8 +289,8 @@ function AndroidSteps() {
           for the ABB app turned on.
         </li>
         <li>
-          Test it: in the ABB app move 1 ₼ from one of your cards to another. Both sides appear on Home within seconds, marked as a transfer between your own
-          cards (not counted as spending).
+          Test it: in the ABB app move 1 ₼ from one of your cards to another. Both sides appear in Activity within seconds, with an “own transfer?”
+          label. One tap on “Yes, my transfer” keeps them out of your spending and budgets.
         </li>
       </Steps>
       <p className="mt-3 text-[13px] text-ink-3">

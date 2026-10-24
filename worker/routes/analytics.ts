@@ -3,6 +3,9 @@ import type { AppEnv } from "../env";
 import { addDays, periodFor } from "@shared/money";
 import { anomalies, categoryReport, dashboard, heatmap, merchantReport, recurring, today, trends } from "../services/analytics";
 import { getSettings } from "../services/settings";
+import { runQuery } from "../services/query";
+import { QuerySchema } from "./dashboards";
+import { body } from "../lib/http";
 
 const app = new Hono<AppEnv>();
 
@@ -30,6 +33,9 @@ app.get("/heatmap", async (c) => {
   return c.json(await heatmap(c.env, c.req.query("from") ?? addDays(now, -90), c.req.query("to") ?? now));
 });
 app.get("/recurring", async (c) => c.json(await recurring(c.env)));
+
+/** The flexible query behind custom dashboard widgets. */
+app.post("/query", async (c) => c.json(await runQuery(c.env, await body(c, QuerySchema))));
 app.get("/anomalies", async (c) => {
   const { from, to } = await range(c);
   return c.json(await anomalies(c.env, from, to));

@@ -110,8 +110,8 @@ connection key there; the page then shows your personal link and the steps for y
    body = magic text **Notification title**, new line, magic text **Notification text**
    (the title holds the amount, so don't leave it out).
 4. Save the macro, and set MacroDroid's battery usage to **Unrestricted** in Android settings.
-5. Test: move 1 ₼ between two of your cards in the ABB app — both sides appear on Home within seconds, marked as a
-   transfer between your own cards.
+5. Test: move 1 ₼ between two of your cards in the ABB app — both sides appear in **Activity** within seconds,
+   labelled “own transfer?”. Tap one and choose **Yes, my transfer** (see “Transfers between your cards” below).
 
 **iPhone:** the Shortcuts app's *Message* automation forwards ABB's SMS (the in‑app guide shows each tap).
 
@@ -145,6 +145,36 @@ Only your own Telegram account can use the bot; everyone else is ignored.
 - **Settings → Budget month:** if your salary arrives e.g. on the 25th, set the month to start on the 25th.
 - **Budgets:** tap **Suggest from my spending** after a few weeks, or set amounts yourself.
 
+## Transfers between your cards
+
+ABB's notifications only show *your* card, never who sent or received the money. So the app treats each card on
+its own: money leaving a card counts as spending, money arriving counts as income. Moving money between your own
+cards changes nothing in total, but the app can't know it was yours until you say so:
+
+- When the same amount leaves one of your cards and arrives on another within a few minutes, both are labelled
+  **own transfer?** and a banner appears on Home and in Activity. Tap **Review** → **Yes, my transfer** for each
+  pair (or **All are mine**), or **Not a transfer** to dismiss it for good.
+- Any single transaction: open it → **Type** → **Between my cards** (the other side follows if it was paired).
+- Many at once: Activity → **Select** → tap the transactions → **Between my cards**.
+- Only confirmed transfers are left out of spending, income and budgets. Changing your mind: open it and pick
+  **Expense** or **Income** again.
+- A transfer you make often (e.g. to your savings card) can be confirmed automatically with a rule: **Merchants &
+  rules → Rules → New rule** → *Transaction type is Transfer received* and *Card is …* → Type **Between my cards**.
+  The matching payment out of your other card follows automatically.
+
+## Make it yours: dashboards and rules
+
+- **My dashboards** (sidebar, or **More** on the phone): start from a template (Monthly overview, Card money flow,
+  Eating out & delivery, Year in review) or a blank one. **Add widget** → choose what to measure, how to split it,
+  the period (incl. custom dates), filters and the chart; the preview updates as you go. Use a widget's **⋯** menu
+  to edit, move, resize, duplicate or delete it, and **Dashboard settings → Show on Home** to pin a dashboard to
+  the Home screen.
+- **Rules** (Merchants & rules → Rules): combine several conditions and see straight away which past transactions
+  match. **Save & apply** also updates those past transactions; **Save** only affects new ones. Rules are checked
+  top to bottom (use the arrows to reorder) and can be switched off without deleting them. Shortcut: open any
+  transaction → **Create a rule from this transaction**.
+- **Custom dates:** Activity → **Custom dates**, and Analytics → **Custom**.
+
 ---
 
 ## Updating the app
@@ -174,6 +204,8 @@ an email code before the login page even loads:
 | “Too many attempts” at login | Wait 15 minutes. This protects you against password guessing. |
 | Payments don't appear | **Settings → Phone connection** shows when the last message arrived. If “never”, the phone automation isn't running (check permissions, battery settings on Android, “Run Immediately” on iPhone). If messages arrive but aren't understood, they're listed under **Bank messages** — tap *Try again* after AI is enabled, or send a sample (with numbers changed) so the parser can be improved. |
 | A category is wrong | Open the transaction and pick the right one. Leave “Use for every … transaction” on — the app learns and fixes the others. |
+| Money moved between my own cards counts as spending | Confirm it: Home or Activity → **Review** → **Yes, my transfer**, or open it → Type → **Between my cards**. Only confirmed transfers are left out. |
+| A pair was never suggested (e.g. more than 30 minutes apart) | Select both in Activity (**Select**) → **Between my cards**. |
 | Error `exceeded resource limits` (rare, with huge imports) | Import a smaller file, or upgrade Cloudflare Workers to the $5/month plan. |
 
 Changing your password: update the `APP_PASSWORD` secret in GitHub and run Deploy again.
