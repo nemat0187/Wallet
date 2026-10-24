@@ -1,0 +1,8 @@
+# Copy to .dev.vars for local development (never commit .dev.vars)
+APP_PASSWORD=change-me-to-a-long-password
+# Optional: enables AI features locally
+ANTHROPIC_API_KEY=
+# Optional: send Claude requests through a gateway or a local mock
+# ANTHROPIC_BASE_URL=
+# Optional: Telegram notifications
+TELEGRAM_BOT_TOKEN=

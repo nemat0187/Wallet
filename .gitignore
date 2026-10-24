@@ -1,0 +1,10 @@
+node_modules/
+dist/
+.wrangler/
+.dev.vars
+.env
+*.log
+wrangler.generated.jsonc
+secrets.generated.json
+test-results/
+screenshots-tmp/
