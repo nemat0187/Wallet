@@ -76,7 +76,7 @@ function PhoneConnection({ origin, lastMessageAt }: { origin: string; lastMessag
   const refresh = useRefresh();
   const tokens = useQuery({ queryKey: ["tokens"], queryFn: () => get<{ id: number; name: string; token_hint: string; created_at: string; last_used_at: string | null }[]>("/messages/tokens/list") });
   const [newToken, setNewToken] = useState<string | null>(null);
-  const [phone, setPhone] = useState<"iphone" | "android">("iphone");
+  const [phone, setPhone] = useState<"iphone" | "android">(() => (/Android/i.test(navigator.userAgent) ? "android" : "iphone"));
   const create = useMutation({
     mutationFn: () => post<{ token: string }>("/messages/tokens", { name: phone === "iphone" ? "iPhone" : "Android phone" }),
     onSuccess: (r) => {
@@ -162,18 +162,28 @@ function PhoneConnection({ origin, lastMessageAt }: { origin: string; lastMessag
         ]}
       />
       <div className="mt-3 rounded-2xl border border-line p-4">
-        <p className="text-sm text-ink-2">You'll need these two values (tap to copy). Doing this on your phone makes copying easier: open this page there.</p>
-        <CopyRow label="Address" value={url} />
-        <CopyRow label="Key" value={newToken ?? "create a key above first"} disabled={!newToken} />
-        {phone === "iphone" ? <IphoneSteps url={url} /> : <AndroidSteps urlWithKey={urlWithKey} />}
+        {phone === "iphone" ? (
+          <>
+            <p className="text-sm text-ink-2">You'll need these two values (tap to copy). Doing this on your phone makes copying easier: open this page there.</p>
+            <CopyRow label="Address" value={url} />
+            <CopyRow label="Key" value={newToken ?? "create a key above first"} disabled={!newToken} />
+            <IphoneSteps url={url} />
+          </>
+        ) : (
+          <>
+            <p className="text-sm text-ink-2">You'll need this link — it already contains your key (tap to copy). Doing this on your phone makes copying easier.</p>
+            <CopyRow label="Link" value={newToken ? urlWithKey : "create a key above first"} disabled={!newToken} />
+            <AndroidSteps />
+          </>
+        )}
       </div>
 
       <h3 className="mt-6 font-semibold">3. Check it works</h3>
       <ul className="mt-1 flex list-disc flex-col gap-1 pl-5 text-sm text-ink-2">
         <li>Make any small card payment, or wait for the next one. Within a few seconds “Last message received” above changes, and the payment appears on Home.</li>
         <li>
-          Not receiving ABB SMS at all? Turn on SMS notifications for each card in the ABB app (or at a branch). On Android you can use the ABB app's notifications
-          instead.
+          Nothing arriving? On Android, check that the ABB app's notifications are on and that MacroDroid has notification access and unrestricted battery use. On
+          iPhone, check that ABB sends you SMS for each card (ABB app settings or a branch).
         </li>
         <li>If a message arrives but isn't understood, it appears under Bank messages, where you can fix it. One-time passwords are always ignored and never stored.</li>
       </ul>
@@ -239,34 +249,54 @@ function IphoneSteps({ url }: { url: string }) {
   );
 }
 
-function AndroidSteps({ urlWithKey }: { urlWithKey: string }) {
+function AndroidSteps() {
   return (
     <>
       <p className="mt-4 text-sm text-ink-2">
-        Use the free app <strong>MacroDroid</strong> from Google Play. It works with ABB's SMS and with notifications from the ABB app.
+        ABB shows every card operation as a notification from the ABB app (“💸 Ödəniş: −5.86₼ …”). The free app <strong>MacroDroid</strong> forwards each one
+        here the moment it appears.
       </p>
       <Steps>
         <li>
-          Install <strong>MacroDroid</strong>, open it and tap <strong>Add Macro</strong>.
+          Install <strong>MacroDroid</strong> from Google Play, open it and tap <strong>Add Macro</strong>.
         </li>
         <li>
-          Trigger: <strong>+</strong> → <strong>Phone/SMS</strong> → <strong>SMS Received</strong> → from contact/number: choose ABB's sender. (Prefer app notifications?
-          Use <strong>Device Events → Notification</strong> → Notification Received → select the ABB app.) Allow the permissions it asks for.
+          <strong>Triggers</strong> → <strong>+</strong> → find <strong>Notification</strong> (use the search icon if you don't see it) →{" "}
+          <strong>Notification Received</strong> → <strong>Select Application(s)</strong> → tick the <strong>ABB</strong> app → OK. Text content: <strong>Any</strong>.
+          When asked, turn on <strong>Notification access</strong> for MacroDroid.
         </li>
         <li>
-          Action: <strong>+</strong> → <strong>Connectivity</strong> → <strong>HTTP Request</strong>. Method <strong>POST</strong>, and paste this URL (it already contains your
-          key): <code className="break-all">{urlWithKey}</code>
+          <strong>Actions</strong> → <strong>+</strong> → <strong>Connectivity</strong> (or Web) → <strong>HTTP Request</strong>:
+          <ul className="mt-1 list-disc pl-5">
+            <li>
+              Request method: <strong>POST</strong>
+            </li>
+            <li>
+              URL: paste the <strong>Link</strong> above.
+            </li>
+            <li>
+              Content / body type: <strong>text/plain</strong>. In the body, tap the magic text button (<strong>…</strong>) and choose{" "}
+              <strong>Notification title</strong>, start a new line, then magic text again → <strong>Notification text</strong>. The title is important: it holds the
+              amount.
+            </li>
+          </ul>
         </li>
         <li>
-          Under <strong>Body / Content</strong>, choose content type <code>application/json</code> and enter <code>{'{"text": "..."}'}</code>, replacing <code>...</code> with
-          the message text: tap the <strong>…</strong> (magic text) button and choose the <strong>SMS message</strong> (or <strong>Notification text</strong>) item.
+          Name the macro “Wallet” and save it (✓).
         </li>
         <li>
-          Give the macro a name such as “Wallet” and save it. In Android settings, allow MacroDroid to run in the background (Battery → Unrestricted) so it doesn't get
-          stopped.
+          In Android settings → Apps → <strong>MacroDroid</strong> → Battery → <strong>Unrestricted</strong>, so Android never puts it to sleep. Keep notifications
+          for the ABB app turned on.
+        </li>
+        <li>
+          Test it: in the ABB app move 1 ₼ from one of your cards to another. Both sides appear on Home within seconds, marked as a transfer between your own
+          cards (not counted as spending).
         </li>
       </Steps>
-      <p className="mt-3 text-[13px] text-ink-3">Any other “SMS to URL” forwarding app works too: send a POST request to the URL above with the message in a field called “text”.</p>
+      <p className="mt-3 text-[13px] text-ink-3">
+        Getting ABB SMS instead of app notifications? Use the trigger <strong>Phone/SMS → SMS Received</strong> (from ABB) and put the <strong>SMS message</strong>{" "}
+        magic text in the body. Any other “forward to URL” app works too: POST the text to the link above.
+      </p>
     </>
   );
 }

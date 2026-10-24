@@ -19,22 +19,48 @@ import { getSettings } from "../services/settings";
 
 export const publicIngest = new Hono<AppEnv>();
 
-publicIngest.post("/", async (c) => {
-  const contentType = c.req.header("content-type") ?? "";
-  let payload: Record<string, unknown> = {};
-  let rawText = "";
-  if (contentType.includes("application/json")) {
-    payload = ((await c.req.json().catch(() => ({}))) ?? {}) as Record<string, unknown>;
-  } else if (contentType.includes("form")) {
-    payload = Object.fromEntries((await c.req.formData()).entries()) as Record<string, unknown>;
-  } else {
-    rawText = await c.req.text();
+/**
+ * Parse whatever the forwarder app sent. Phone automation apps paste the notification
+ * into a JSON template as-is, so line breaks inside strings (invalid JSON) are common;
+ * those are repaired, and anything else unreadable is treated as the message text itself.
+ */
+export function readPayload(rawText: string, contentType: string): Record<string, unknown> {
+  if (contentType.includes("application/x-www-form-urlencoded")) return Object.fromEntries(new URLSearchParams(rawText));
+  const asObject = (v: unknown) => (v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null);
+  for (const candidate of [rawText, escapeControlCharsInStrings(rawText)]) {
     try {
-      payload = JSON.parse(rawText);
+      const parsed = asObject(JSON.parse(candidate));
+      if (parsed) return parsed;
     } catch {
-      payload = { text: rawText };
+      // try the next form
     }
   }
+  return { text: rawText };
+}
+
+function escapeControlCharsInStrings(json: string): string {
+  let out = "";
+  let inString = false;
+  for (let i = 0; i < json.length; i++) {
+    const ch = json[i];
+    if (inString && ch === "\\") {
+      out += ch + (json[i + 1] ?? "");
+      i++;
+    } else if (ch === '"') {
+      inString = !inString;
+      out += ch;
+    } else if (inString && (ch === "\n" || ch === "\r" || ch === "\t")) {
+      out += ch === "\n" ? "\\n" : ch === "\r" ? "\\r" : "\\t";
+    } else out += ch;
+  }
+  return out;
+}
+
+publicIngest.post("/", async (c) => {
+  const contentType = c.req.header("content-type") ?? "";
+  const payload = contentType.includes("multipart/form-data")
+    ? (Object.fromEntries((await c.req.formData()).entries()) as Record<string, unknown>)
+    : readPayload(await c.req.text(), contentType);
 
   const token =
     c.req.header("authorization")?.replace(/^Bearer\s+/i, "") ??
@@ -56,9 +82,12 @@ publicIngest.post("/", async (c) => {
     }
     return undefined;
   };
-  const text = pick("text", "message", "body", "msg", "content", "sms", "notification", "data");
+  let text = pick("text", "message", "body", "msg", "content", "sms", "notification", "big_text", "data");
+  // Notifications have a title (for ABB: "💸 Ödəniş: -5.86₼") that carries the amount — keep it.
+  const title = pick("title", "notification_title", "not_title");
+  if (title && !text?.includes(title.trim())) text = text ? `${title}\n${text}` : title;
   if (!text) throw new HTTPException(400, { message: "No message text found (send it as 'text')" });
-  const sender = pick("from", "sender", "address", "phone", "app", "title") ?? null;
+  const sender = pick("from", "sender", "address", "phone", "app", "package") ?? null;
   const ts = pick("received_at", "receivedStamp", "timestamp", "sentStamp", "date", "time");
   let receivedAt: Date | undefined;
   if (ts) {

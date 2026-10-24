@@ -10,7 +10,7 @@ import { aiBlocked, structuredCall } from "./ai";
 import { setSetting } from "./settings";
 import { createContext, createTransaction, matchOwnTransfer, resolveAccount } from "./transactions";
 import { convert } from "./fx";
-import { localDate } from "@shared/money";
+import { localDate, parseAmount } from "@shared/money";
 
 export interface IngestInput {
   body: string;
@@ -97,7 +97,7 @@ export async function processMessage(
       looksFinancial(body) ? "failed" : "ignored",
       method,
       JSON.stringify(parsed),
-      looksFinancial(body) ? "Could not find a transaction amount in this message" : "Not a transaction",
+      looksFinancial(body) ? "No transaction amount found — is the notification title included?" : "Not a transaction",
       messageId,
     );
     return {
@@ -106,6 +106,7 @@ export async function processMessage(
       transaction_id: null,
       needs_ai: false,
       parsed,
+      error: looksFinancial(body) ? "No transaction amount found — is the notification title included?" : "Not a transaction",
     };
   }
 
@@ -219,6 +220,10 @@ async function parseWithAI(
     effort: "low",
   });
   if (!r) return null;
+  // Never accept an amount that isn't actually written in the message.
+  const amountWritten = amountInText(body, r.amount) || Boolean(r.original_amount && amountInText(body, r.original_amount));
+  const isJustTheBalance = r.balance_after !== null && Math.abs(r.amount - r.balance_after) < 0.005;
+  if (r.is_transaction && (!amountWritten || isJustTheBalance)) return emptyParse();
   let occurred: string | null = null;
   const dt = r.local_datetime?.match(/(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})/);
   if (dt) {
@@ -240,6 +245,32 @@ async function parseWithAI(
     balance_after: toMinor(r.balance_after),
     balance_currency: r.balance_currency?.toUpperCase().slice(0, 3) ?? null,
     confidence: 0.9,
+  };
+}
+
+function amountInText(body: string, amount: number): boolean {
+  const target = Math.round(Math.abs(amount) * 100);
+  for (const m of body.matchAll(/\d{1,3}(?:[ ,]\d{3})+(?:[.,]\d{1,2})?|\d+(?:[.,]\d{1,2})?/g)) {
+    if (parseAmount(m[0]) === target) return true;
+  }
+  return false;
+}
+
+function emptyParse(): ParsedMessage {
+  return {
+    is_transaction: false,
+    direction: "out",
+    type: "other",
+    amount: 0,
+    currency: "AZN",
+    orig_amount: null,
+    orig_currency: null,
+    merchant: null,
+    card_last4: null,
+    occurred_at: null,
+    balance_after: null,
+    balance_currency: null,
+    confidence: 0,
   };
 }
 

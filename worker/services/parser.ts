@@ -139,6 +139,9 @@ export function parseBankMessage(text: string, opts: ParseOptions): ParsedMessag
   }
 
   const card = extractCard(raw, kv.card);
+  // Real card notifications name a card, a balance, a +/- amount or an operation field.
+  // Without any of those it's probably an ad ("10 ₼ cashback!") — let AI or the owner decide.
+  if (!card && !balance && !main.sign && !typeText.trim()) return empty;
   const dateText = kv.date ? `${kv.date} ${kv.time ?? ""}` : kv.time;
   const occurredAt = (dateText && extractDate(dateText, opts)) || extractDate(raw, opts);
   let merchant = kv.merchant ? cleanMerchant(kv.merchant) : null;
@@ -241,16 +244,23 @@ interface KeyValues {
   description?: string;
 }
 
-/** Splits on newlines, semicolons and on ". Next" / ", Key:" boundaries, then reads "Key: Value" pairs. */
+// Field names that start a new clause even without punctuation ("… APUS PAYMENT Kart: **4882 Balans: 3.05₼").
+const FIELD_START = /\s+(?=(?:Kart|KART|kart|Card|CARD|Balans|BALANS|balans|Balance|Qalıq|Qaliq|Tarix|Date|Карта|Остаток)\s*:)/;
+
+/** Splits a message into clauses: lines, semicolons, ". Next", ", Key:" and before known field names. */
+function splitClauses(raw: string): string[] {
+  return raw
+    .split(/\n|;\s*|\.\s+(?=[A-ZƏÖÜŞÇĞİА-Я])|,\s*(?=[A-Za-zƏəÖöÜüŞşÇçĞğİıА-Яа-я ]{2,25}:)/)
+    .flatMap((part) => part.split(FIELD_START));
+}
+
+/** Reads "Key: Value" pairs (keys may start with an emoji, e.g. "💸 Ödəniş: -5.86₼"). */
 function readKeyValues(raw: string): KeyValues {
   const kv: KeyValues = {};
-  const parts = raw.split(
-    /\n|;\s*|\.\s+(?=[A-ZƏÖÜŞÇĞİА-Я])|,\s*(?=[A-Za-zƏəÖöÜüŞşÇçĞğİıА-Яа-я ]{2,25}:)/,
-  );
-  for (const part of parts) {
+  for (const part of splitClauses(raw)) {
     const m = part.match(/^\s*([^:\d]{2,30}?)\s*:\s*(.+?)\s*$/);
     if (!m) continue;
-    const key = foldText(m[1]).trim();
+    const key = foldText(m[1]).replace(/^[^a-zа-яё]+/, "").trim();
     const value = m[2];
     for (const { field, re } of KEY_FIELDS) {
       if (!re.test(key)) continue;
@@ -352,6 +362,21 @@ function stripNoise(seg: string): string {
 
 function extractMerchantFreeText(raw: string, folded: string, main: FoundAmount): string | null {
   const after = raw.slice(main.end);
+  // The clause right after the amount is usually the merchant ("💸 Ödəniş: -5.86₼\nAPUS PAYMENT\nKart: …").
+  // When it's a separate line or written in capitals, keep it exactly as written.
+  const firstLineBreak = after.indexOf("\n");
+  const rest = splitClauses(after)
+    .flatMap((c) => c.split(/[,|]/))
+    .map((c) => c.trim())
+    .filter(Boolean);
+  const first = rest[0];
+  if (first && !/^\s*[^:\d]{2,30}:\s*\S/.test(first)) {
+    const ownLine = firstLineBreak > -1 && after.slice(0, firstLineBreak).trim() === "";
+    const letters = first.replace(/[^A-Za-zА-Яа-яƏəÖöÜüŞşÇçĞğİı]/g, "");
+    const capitals = letters.replace(/[^A-ZА-ЯƏÖÜŞÇĞİ]/g, "").length;
+    const name = stripTokens(first);
+    if ((ownLine || (letters.length >= 3 && capitals / letters.length >= 0.7)) && looksLikeName(name)) return cleanMerchant(name);
+  }
   // "... at BRAVO SUPERMARKET on card *1234" / "... в МАГАЗИН ..."
   const at = after.match(/(?:^|\s)(?:at|в|@)\s+([A-Za-z0-9А-Яа-я][^,\n;]{1,60})/);
   if (at) {
@@ -375,6 +400,22 @@ function extractMerchantFreeText(raw: string, folded: string, main: FoundAmount)
   }
   void folded;
   return null;
+}
+
+/** Removes card masks, dates and times but keeps every word. */
+function stripTokens(seg: string): string {
+  return seg
+    .replace(/\d{1,2}[./-]\d{1,2}[./-]\d{2,4}/g, " ")
+    .replace(/\b\d{1,2}:\d{2}(:\d{2})?\b/g, " ")
+    .replace(/\d{4,6}[*xX•·]+\d{0,2}[*xX•·]*\d{4}|[*xX•·]{2,}\s?\d{4}|\*\s?\d{4}/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function looksLikeName(seg: string): boolean {
+  if (seg.length < 2 || seg.length > 70) return false;
+  if (MERCHANT_STOP.test(foldText(seg)) || CUR_WITH_DIGIT.test(seg)) return false;
+  return seg.replace(/[^A-Za-zА-Яа-яƏəÖöÜüŞşÇçĞğİı]/g, "").length >= 2;
 }
 
 function looksLikeMerchant(seg: string): boolean {

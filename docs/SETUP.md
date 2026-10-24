@@ -98,16 +98,25 @@ your habits, and answers questions like *“How much did I spend on taxis this m
 
 ## Step 7 — Connect your phone to ABB messages
 
-Open **Settings → Phone connection** in the app (best: on your phone, so you can copy‑paste).
-It shows your personal address, lets you create a connection key, and gives step‑by‑step instructions for
-**iPhone (Shortcuts app)** and **Android (MacroDroid app)**.
+Open **Settings → Phone connection** in the app — best on your phone, so you can copy‑paste. Create a
+connection key there; the page then shows your personal link and the steps for your phone.
 
-Before that, make sure you actually receive an SMS (or ABB app notification) for card payments:
-in the **ABB mobile app** check the SMS notification settings for each of your 3 cards (or ask at a branch).
-On Android you can use the ABB app's push notifications instead of SMS.
+**Android (MacroDroid) in short** — ABB reports every operation as a notification from the ABB app, e.g.
+`💸 Ödəniş: -5.86₼ / APUS PAYMENT / Kart: **4882 / Balans: 3.05₼`:
 
-Then make a small payment: within seconds it appears on the Home screen, already categorized.
-New cards are added automatically (recognized by their last 4 digits) — rename them on **Cards & accounts**.
+1. Install **MacroDroid** (Google Play) → **Add Macro**.
+2. Trigger: **Notification Received** → application **ABB** → text content **Any**. Allow *Notification access*.
+3. Action: **HTTP Request** → method **POST** → URL = the link from Settings → body type **text/plain** →
+   body = magic text **Notification title**, new line, magic text **Notification text**
+   (the title holds the amount, so don't leave it out).
+4. Save the macro, and set MacroDroid's battery usage to **Unrestricted** in Android settings.
+5. Test: move 1 ₼ between two of your cards in the ABB app — both sides appear on Home within seconds, marked as a
+   transfer between your own cards.
+
+**iPhone:** the Shortcuts app's *Message* automation forwards ABB's SMS (the in‑app guide shows each tap).
+
+Your cards are added automatically the first time they appear (recognized by their last 4 digits, e.g. `**4882`)
+— give them names on **Cards & accounts**.
 
 > **Read‑only by design:** the app never asks for your bank login and has no way to make payments.
 > It only reads the notification texts you already receive. One‑time passwords (3‑D Secure codes) are detected

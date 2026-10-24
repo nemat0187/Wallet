@@ -112,10 +112,17 @@ export async function categorize(
   if (input.type === "fee") {
     return base(idx.bySlug.get("finance.fees")?.id ?? fallback(idx, "expense"), "default", "expense", merchantName ?? "Bank fee");
   }
+  // Card-to-card transfers: "ABB MOBILE" etc. is the channel, not a shop, so merchant memory and AI
+  // don't apply. Transfers between your own cards are matched up afterwards; rules can refine the rest.
+  if (input.type === "transfer_in" || input.type === "transfer_out") {
+    const cat = idx.bySlug.get(input.type === "transfer_in" ? "income.transfer" : "people");
+    const kind = cat?.kind ?? (input.type === "transfer_in" ? "income" : "expense");
+    return base(cat?.id ?? fallback(idx, kind), "default", kind, merchantName);
+  }
 
-  // 2. Merchant memory
+  // 2. Merchant memory (only when the remembered category fits the direction of the money)
   const known = input.merchant?.category_id ? idx.byId.get(input.merchant.category_id) : null;
-  if (known && !known.archived) {
+  if (known && !known.archived && fitsDirection(known.kind, input)) {
     return base(known.id, "merchant", known.kind, merchantName);
   }
 
@@ -123,7 +130,7 @@ export async function categorize(
   if (input.merchant) {
     const hit = builtinMatch(input.merchant.key);
     const cat = hit ? idx.bySlug.get(hit.slug) : null;
-    if (cat) {
+    if (cat && fitsDirection(cat.kind, input)) {
       await run(
         db,
         "UPDATE merchants SET category_id = ?, category_source = 'builtin', updated_at = ? WHERE id = ? AND category_id IS NULL",
@@ -138,8 +145,6 @@ export async function categorize(
   // 4. Defaults by transaction type (AI may refine these later when a merchant is present)
   const typeSlug: Partial<Record<ParsedMessage["type"], string>> = {
     income: "income.other",
-    transfer_in: "income.transfer",
-    transfer_out: "people",
     refund: "income.refund",
   };
   const slug = typeSlug[input.type] ?? (direction === "in" ? "income.other" : FALLBACK_SLUG.expense);
@@ -153,13 +158,20 @@ export async function categorize(
     merchant_name: merchantName,
     excluded: false,
     // Purchases/income from an unknown merchant are worth asking AI about.
-    needs_ai: hasName && input.type !== "transfer_out",
+    needs_ai: hasName,
     rule_id: null,
   };
 
   function base(category_id: number, source: CategorySource, kind: TxKind, name: string | null): CategorizeResult {
     return { category_id, category_source: source, kind, merchant_name: name, excluded: false, needs_ai: false, rule_id: null };
   }
+}
+
+/** Income categories need money in; spending categories need money out (or a refund). */
+function fitsDirection(kind: TxKind, input: CategorizeInput): boolean {
+  if (kind === "income") return input.amount > 0;
+  if (kind === "expense") return input.amount < 0 || input.type === "refund";
+  return true;
 }
 
 function defaultKind(type: ParsedMessage["type"]): TxKind {

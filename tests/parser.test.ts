@@ -185,3 +185,43 @@ describe("parseBankMessage — descriptions and names", () => {
     expect(b.merchant).toBe("MAGAZA 24 SAAT");
   });
 });
+
+// Real ABB mobile app notifications (title line + body), Oct 2026.
+describe("parseBankMessage — ABB app notifications", () => {
+  it("payment", () => {
+    const r = parse("💸 Ödəniş: -5.86₼\nAPUS PAYMENT\nKart: **4882\nBalans: 3.05₼");
+    expect(r).toMatchObject({ is_transaction: true, direction: "out", type: "purchase", amount: 586, currency: "AZN", merchant: "APUS PAYMENT", card_last4: "4882", balance_after: 305 });
+  });
+  it("incoming and outgoing transfers", () => {
+    expect(parse("💸 Köçürmə: +5.00₼\nABB MOBILE\nKart: **4882\nBalans: 8.91₼")).toMatchObject({
+      direction: "in",
+      type: "transfer_in",
+      amount: 500,
+      merchant: "ABB MOBILE",
+      card_last4: "4882",
+      balance_after: 891,
+    });
+    expect(parse("💸 Köçürmə: -5.00₼\nABB MOBILE\nKart: **4934\nBalans: 8,374.72₼")).toMatchObject({
+      direction: "out",
+      type: "transfer_out",
+      amount: 500,
+      card_last4: "4934",
+      balance_after: 837472,
+    });
+  });
+  it("title and text joined on one line", () => {
+    expect(parse("💸 Ödəniş: -5.86₼ APUS PAYMENT Kart: **4882 Balans: 3.05₼")).toMatchObject({
+      direction: "out",
+      amount: 586,
+      merchant: "APUS PAYMENT",
+      card_last4: "4882",
+      balance_after: 305,
+    });
+  });
+  it("body without the title line has no amount", () => {
+    expect(parse("APUS PAYMENT\nKart: **4882\nBalans: 3.05₼").is_transaction).toBe(false);
+  });
+  it("advertising with an amount but no card or balance is not recorded", () => {
+    expect(parse("Kampaniya! Kartla ödəniş edin, 10 ₼ keşbek qazanın").is_transaction).toBe(false);
+  });
+});

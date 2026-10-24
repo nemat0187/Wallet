@@ -104,6 +104,31 @@ for (let d = new Date(start); d <= today; d = new Date(d.getTime() + 86400000)) 
 messages.push({ when: new Date(today.getTime() - 3 * 86400000), h: 20, m: 10, merchant: "BRAVO SUPERMARKET 014 BAKU AZ", card: "main", amount: 245.3, currency: "AZN", kind: "out" });
 messages.sort((a, b) => a.when - b.when || a.h - b.h);
 
+const money = (n) => n.toFixed(2).replace(/\B(?=(\d{3})+(?!\d))/, ",");
+const RECENT_DAYS = 6;
+
+/** Messages from the last few days use the ABB app's real notification format (no date inside; time = arrival). */
+function appNotification(x) {
+  const azn = x.currency === "USD" ? x.amount * 1.7 : x.amount;
+  const card = cards[x.card];
+  if (x.kind === "salary") {
+    balances.salary += x.amount;
+    return `💸 Köçürmə: +${money(x.amount)}₼\nƏMƏK HAQQI\nKart: **${cards.salary}\nBalans: ${money(balances.salary)}₼`;
+  }
+  if (x.kind === "move") {
+    balances.salary -= x.amount;
+    balances.main += x.amount;
+    return [
+      `💸 Köçürmə: -${money(x.amount)}₼\nABB MOBILE\nKart: **${cards.salary}\nBalans: ${money(balances.salary)}₼`,
+      `💸 Köçürmə: +${money(x.amount)}₼\nABB MOBILE\nKart: **${cards.main}\nBalans: ${money(balances.main)}₼`,
+    ];
+  }
+  balances[x.card] -= azn;
+  if (x.kind === "rent") return `💸 Köçürmə: -${money(x.amount)}₼\nABB MOBILE\nKart: **${card}\nBalans: ${money(balances[x.card])}₼`;
+  if (x.kind === "atm") return `💸 Nağdlaşdırma: -${money(x.amount)}₼\n${x.merchant}\nKart: **${card}\nBalans: ${money(balances[x.card])}₼`;
+  return `💸 Ödəniş: -${money(azn)}₼\n${x.merchant}\nKart: **${card}\nBalans: ${money(balances[x.card])}₼`;
+}
+
 function sms(x) {
   const time = fmt(x.when, x.h, x.m);
   const azn = x.currency === "USD" ? x.amount * 1.7 : x.amount;
@@ -136,12 +161,15 @@ function sms(x) {
 
 let ok = 0;
 for (const x of messages) {
-  const texts = [sms(x)].flat();
+  // Local time in Baku (UTC+4) → epoch ms for the "received" timestamp.
+  const at = Date.UTC(x.when.getUTCFullYear(), x.when.getUTCMonth(), x.when.getUTCDate(), x.h, x.m) - 4 * 3600_000;
+  const recent = Date.now() - at < RECENT_DAYS * 86400000 && at <= Date.now();
+  const texts = [recent ? appNotification(x) : sms(x)].flat();
   for (const text of texts) {
-    const res = await fetch(`${BASE}/api/ingest`, {
+    const res = await fetch(`${BASE}/api/ingest?token=${encodeURIComponent(token)}`, {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-      body: JSON.stringify({ text, from: "ABB" }),
+      headers: { "content-type": "text/plain" },
+      body: recent ? JSON.stringify({ text, received_at: at }) : JSON.stringify({ text, from: "ABB" }),
     });
     const body = await res.json();
     if (body.status === "parsed") ok++;
