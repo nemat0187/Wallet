@@ -9,6 +9,8 @@ import { Button, ErrorNote, Label, Segmented, Spinner, Toggle, clsx, errorText, 
 import { PageHeader } from "../components/Layout";
 import { THEMES, applyTheme, savedTheme, type ThemeId } from "../lib/theme";
 import { TwoStepSection } from "../components/TwoStep";
+import { PinSection } from "../components/PinSection";
+import { clearPin } from "../lib/pin";
 
 export default function SettingsPage() {
   const boot = useBootstrap();
@@ -563,11 +565,19 @@ function Security() {
     queryFn: () => get<{ id: string; created_at: string; last_seen_at: string; user_agent: string | null; ip: string | null; current: boolean }[]>("/auth/sessions"),
   });
   const revoke = useMutation({ mutationFn: () => post("/auth/sessions/revoke-others"), onSuccess: () => sessions.refetch() });
-  const logout = useMutation({ mutationFn: () => post("/auth/logout"), onSuccess: () => window.location.reload() });
+  const logout = useMutation({
+    mutationFn: () => {
+      clearPin(); // the next sign-in on this device creates a new PIN
+      return post("/auth/logout");
+    },
+    onSuccess: () => window.location.reload(),
+  });
 
   return (
     <Card id="security" icon={<ShieldCheck size={20} />} title="Security" intro="To change the owner password, update the APP_PASSWORD secret in GitHub and run Deploy again.">
       <TwoStepSection />
+
+      <PinSection />
 
       <h3 className="mt-6 font-semibold">Logged-in devices</h3>
       <ul className="mt-2 divide-y divide-line rounded-2xl border border-line text-sm">

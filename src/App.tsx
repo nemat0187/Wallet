@@ -5,6 +5,8 @@ import { get } from "./lib/api";
 import { Spinner } from "./lib/ui";
 import Layout from "./components/Layout";
 import MfaGate from "./components/MfaGate";
+import PinGate from "./components/PinGate";
+import { clearPin } from "./lib/pin";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Activity from "./pages/Activity";
@@ -60,6 +62,7 @@ export default function App() {
 
   useEffect(() => {
     const onLogout = () => {
+      clearPin();
       setAuthed(false);
       dropCachedData();
     };
@@ -84,28 +87,30 @@ export default function App() {
 
   return (
     <MfaGate>
-      <Suspense fallback={<Spinner />}>
-        <Routes>
-          <Route element={<Layout />}>
-            <Route index element={<Dashboard />} />
-            <Route path="activity" element={<Activity />} />
-            <Route path="budgets" element={<Budgets />} />
-            <Route path="insights" element={<Insights />} />
-            <Route path="analytics" element={<Analytics />} />
-            <Route path="dashboards" element={<Dashboards />} />
-            <Route path="notes" element={<Notes />} />
-            <Route path="admin" element={<Admin />} />
-            <Route path="categories" element={<Categories />} />
-            <Route path="merchants" element={<Merchants />} />
-            <Route path="accounts" element={<Accounts />} />
-            <Route path="inbox" element={<InboxPage />} />
-            <Route path="import" element={<ImportPage />} />
-            <Route path="settings" element={<SettingsPage />} />
-            <Route path="more" element={<More />} />
-            <Route path="*" element={<Dashboard />} />
-          </Route>
-        </Routes>
-      </Suspense>
+      <PinGate>
+        <Suspense fallback={<Spinner />}>
+          <Routes>
+            <Route element={<Layout />}>
+              <Route index element={<Dashboard />} />
+              <Route path="activity" element={<Activity />} />
+              <Route path="budgets" element={<Budgets />} />
+              <Route path="insights" element={<Insights />} />
+              <Route path="analytics" element={<Analytics />} />
+              <Route path="dashboards" element={<Dashboards />} />
+              <Route path="notes" element={<Notes />} />
+              <Route path="admin" element={<Admin />} />
+              <Route path="categories" element={<Categories />} />
+              <Route path="merchants" element={<Merchants />} />
+              <Route path="accounts" element={<Accounts />} />
+              <Route path="inbox" element={<InboxPage />} />
+              <Route path="import" element={<ImportPage />} />
+              <Route path="settings" element={<SettingsPage />} />
+              <Route path="more" element={<More />} />
+              <Route path="*" element={<Dashboard />} />
+            </Route>
+          </Routes>
+        </Suspense>
+      </PinGate>
     </MfaGate>
   );
 }
