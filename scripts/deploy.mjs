@@ -7,7 +7,7 @@
 // 4. Stores secrets (password, API keys) in Cloudflare.
 //
 // Needs: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, APP_PASSWORD
-// Optional: ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN, ANTHROPIC_BASE_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+// Optional: ANTHROPIC_API_KEY (owner-only fallback; people add their own AI keys in the app), TELEGRAM_BOT_TOKEN, ANTHROPIC_BASE_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
 
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -107,7 +107,7 @@ try {
 
   const enabled = [
     "✅ Password login",
-    process.env.ANTHROPIC_API_KEY ? "✅ AI (Claude)" : "➖ AI — add ANTHROPIC_API_KEY to enable",
+    process.env.ANTHROPIC_API_KEY ? "✅ AI (owner key; everyone else adds theirs in Settings → AI)" : "➖ AI — each person adds their own key in Settings → AI",
     process.env.TELEGRAM_BOT_TOKEN ? "✅ Telegram bot" : "➖ Telegram — optional, add TELEGRAM_BOT_TOKEN",
     process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET ? "✅ Sign in with Google" : "➖ Google sign-in — optional, add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET",
   ];

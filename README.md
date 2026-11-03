@@ -38,7 +38,7 @@ It runs for free on your own Cloudflare account and only you can open it.
   week, month, weekday, hour, tag, type), the period (presets or custom dates), filters (categories, cards,
   merchant, tag, amount) and the chart (big number, bars, columns, line, area, donut, table, heatmap). Ready‑made
   templates to start from; pin any dashboard to Home.
-- **AI coach (Claude).** Weekly and monthly reports with a health score, bad habits with their monthly cost,
+- **AI coach (bring your own key: Claude, ChatGPT or Gemini).** Weekly and monthly reports with a health score, bad habits with their monthly cost,
   concrete recommendations and suggested budgets. Ask questions in plain language (also in Azerbaijani or Russian):
   “How much did I spend on taxis this month?” — answers are looked up in your real data.
 - **Your Home screen, your way.** Tap **Customize** on Home to move, hide or resize blocks, switch columns, and add
@@ -61,11 +61,11 @@ It runs for free on your own Cloudflare account and only you can open it.
 | Cloudflare Workers + D1 database (free plan: 100k requests/day, 5 GB) | **$0** |
 | GitHub (code + deployments) | **$0** |
 | Telegram bot | **$0** |
-| AI (Claude) — optional, with a hard monthly limit you choose (default $3) | typically **$0.20–$1 / month** |
+| AI — optional, paid to your own provider with your own key (Gemini has a free tier); monthly token and dollar limits | typically **$0–$1 / month** |
 
 Why so cheap: the everyday work (reading messages, recognizing merchants) is done by built‑in rules; AI only
-sees each new merchant once with a small, fast model (Claude Haiku 5.5), and reports send pre‑computed statistics
-rather than raw transactions to the more precise model (Claude Opus 5.5). Both models can be changed in Settings.
+sees each new merchant once with a small, fast model, and reports send pre‑computed statistics
+rather than raw transactions to a more precise model. You choose the provider and both models in Settings → AI.
 
 ## Privacy & security
 
@@ -86,7 +86,7 @@ job handles background AI work, exchange rates (Central Bank of Azerbaijan) and 
 
 ```bash
 npm install
-cp .dev.vars.example .dev.vars        # set APP_PASSWORD (and optionally ANTHROPIC_API_KEY)
+cp .dev.vars.example .dev.vars        # set APP_PASSWORD (AI keys are added in the app, Settings → AI)
 npm run db:migrate:local
 npm run build                          # build the web app once (served by wrangler)
 npm run dev                            # API on :8787, web app with hot reload on :5173

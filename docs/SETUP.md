@@ -60,7 +60,7 @@ Optional (you can add these later, then redeploy):
 
 | Name | Value |
 |---|---|
-| `ANTHROPIC_API_KEY` | enables AI — see step 6 |
+| `ANTHROPIC_API_KEY` | optional: an AI key the **owner's** account uses without typing it in the app — see step 6 |
 | `TELEGRAM_BOT_TOKEN` | enables Telegram notifications — see step 8 |
 
 > Secrets are encrypted by GitHub and passed straight to Cloudflare. Nobody — including people who can see
@@ -89,12 +89,25 @@ If it fails ❌, open the failed step and read the last lines — the most commo
 AI categorizes merchants it hasn't seen before, reads unusual SMS formats, writes weekly/monthly reports about
 your habits, and answers questions like *“How much did I spend on taxis this month?”*.
 
-1. Go to **https://console.anthropic.com**, create an account, open **Billing** and add a small prepaid credit
-   (e.g. **$5** — typical use is well under $1/month).
-2. Open **API Keys** → **Create Key** → copy it.
-3. In GitHub, add the secret `ANTHROPIC_API_KEY` with that value (step 3), then **run Deploy again** (step 4).
-4. In the app, **Settings → AI** shows the status and this month's AI spend. A monthly limit (default **$3**)
-   pauses AI automatically if it's ever reached.
+Each person brings their own AI key, inside the app, so nobody spends anybody else's money. You can use
+**Claude**, **ChatGPT** (OpenAI) or **Gemini** (Google).
+
+1. Open **Settings → AI** and pick a provider.
+2. Create a key at the provider's site (the card shows the link and the steps):
+   - **Gemini** — https://aistudio.google.com/apikey — has a free tier, the easiest way to start.
+   - **Claude** — https://console.anthropic.com → Billing (e.g. **$5** prepaid) → API Keys.
+   - **ChatGPT** — https://platform.openai.com → Billing → API keys.
+3. Paste the key and press **Save key**. The app checks it with the provider and loads the models you can use.
+   Pick a fast model (everyday work) and a smart model (reports and chat), or keep the suggested ones.
+4. Press **Test connection** to confirm it works.
+
+The key is stored encrypted, only its last 4 characters are ever shown, and it is never included in a backup
+export. Limits: a monthly **token limit** (default 2,000,000) for every provider, plus a monthly **dollar limit**
+(default $3) that applies where the price is known (Claude). AI pauses automatically when a limit is reached or
+when the provider rejects the key.
+
+The owner's `ANTHROPIC_API_KEY` secret (step 3) is optional: if present, the **owner's** account uses it until
+they save a key of their own. Other people never use it.
 
 ## Step 7 — Connect your phone to ABB messages
 

@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Copy, KeyRound, Smartphone, Sparkles, Send, CalendarDays, ShieldCheck, Database, Palette, Trash2, LogOut, CheckCircle2, UserRound } from "lucide-react";
+import { Copy, KeyRound, Smartphone, Send, CalendarDays, ShieldCheck, Database, Palette, Trash2, LogOut, CheckCircle2, UserRound } from "lucide-react";
 import type { Settings as SettingsT } from "@shared/types";
 import { del, get, patch, post } from "../lib/api";
 import { useBootstrap, useRefresh } from "../lib/data";
@@ -10,6 +10,7 @@ import { PageHeader } from "../components/Layout";
 import { THEMES, applyTheme, savedTheme, type ThemeId } from "../lib/theme";
 import { TwoStepSection } from "../components/TwoStep";
 import { PinSection } from "../components/PinSection";
+import { AiCard } from "../components/AiCard";
 import { clearPin } from "../lib/pin";
 
 export default function SettingsPage() {
@@ -341,105 +342,8 @@ function AndroidSteps() {
 // ---------------------------------------------------------------------------
 // AI
 
-const MODEL_LABEL: Record<string, string> = {
-  "claude-haiku-5-5": "Claude Haiku 5.5 — cheapest, fast",
-  "claude-sonnet-5-5": "Claude Sonnet 5.5 — balanced",
-  "claude-opus-5-5": "Claude Opus 5.5 — most precise",
-};
-
 function AiSettings({ s }: { s: SettingsT }) {
-  const save = useSaveSettings();
-  const toast = useToast();
-  const usage = useQuery({
-    queryKey: ["ai-usage"],
-    queryFn: () =>
-      get<{ month_spend_usd: number; cap_usd: number; status_text: string; by_purpose: { purpose: string; model: string; calls: number; cost_usd: number }[]; months: { month: string; cost_usd: number }[] }>("/ai/usage"),
-  });
-  const [cap, setCap] = useState(String(s.ai_monthly_cap_usd));
-  const categorize = useMutation({
-    mutationFn: () => post<{ categorized_merchants: number }>("/ai/categorize"),
-    onSuccess: (r) => toast(r.categorized_merchants ? `Categorized ${r.categorized_merchants} merchants` : "Nothing was waiting for AI"),
-    onError: (e) => toast(errorText(e), "error"),
-  });
-
-  return (
-    <Card
-      id="ai"
-      icon={<Sparkles size={20} />}
-      title="AI"
-      intro={
-        <>
-          AI is only asked about merchants the app hasn't seen before (each one once), for messages it can't read, and for your reports and questions. Everything else is
-          handled by built-in rules for free. Typical cost: well under $1 a month.
-        </>
-      }
-    >
-      {!s.ai_configured ? (
-        <div className="rounded-2xl bg-warn-soft p-4 text-sm leading-relaxed">
-          <p className="font-medium">AI isn't connected yet.</p>
-          <ol className="mt-2 list-decimal pl-5">
-            <li>
-              Create an account at <strong>console.anthropic.com</strong>, add a small prepaid credit (e.g. $5 lasts months), and create an API key.
-            </li>
-            <li>
-              In your GitHub repository: Settings → Secrets and variables → Actions → New repository secret, name <code>ANTHROPIC_API_KEY</code>, paste the key.
-            </li>
-            <li>Run the “Deploy” workflow again (Actions tab). That's it.</li>
-          </ol>
-        </div>
-      ) : (
-        <p className="text-sm">
-          <span className="text-ink-2">Status:</span> <strong>{usage.data?.status_text ?? "…"}</strong>
-        </p>
-      )}
-
-      <Toggle checked={s.ai_enabled} onChange={(v) => save.mutate({ ai_enabled: v })} label="Use AI" hint="When off, only rules and your own corrections are used." />
-      <Toggle checked={s.ai_auto_reports} onChange={(v) => save.mutate({ ai_auto_reports: v })} label="Automatic weekly and monthly reports" />
-
-      <div className="mt-3 grid gap-4 sm:grid-cols-2">
-        <label className="block">
-          <Label hint="(USD)">Monthly spending limit</Label>
-          <div className="flex gap-2">
-            <input className="field num" inputMode="decimal" value={cap} onChange={(e) => setCap(e.target.value)} />
-            <Button onClick={() => save.mutate({ ai_monthly_cap_usd: Number(cap.replace(",", ".")) || 0 })} disabled={Number(cap) === s.ai_monthly_cap_usd}>
-              Save
-            </Button>
-          </div>
-          <span className="mt-1 block text-[13px] text-ink-3">AI pauses automatically when this is reached.</span>
-        </label>
-        <div>
-          <Label>This month</Label>
-          <p className="text-2xl font-semibold num">${(usage.data?.month_spend_usd ?? 0).toFixed(3)}</p>
-          <p className="text-[13px] text-ink-3">{usage.data?.by_purpose.reduce((n, p) => n + p.calls, 0) ?? 0} AI requests</p>
-        </div>
-        <label className="block">
-          <Label hint="(categorizing, reading messages)">Everyday model</Label>
-          <select className="field" value={s.ai_fast_model} onChange={(e) => save.mutate({ ai_fast_model: e.target.value })}>
-            {Object.entries(MODEL_LABEL).map(([v, l]) => (
-              <option key={v} value={v}>
-                {l}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="block">
-          <Label hint="(reports, Ask AI)">Advice model</Label>
-          <select className="field" value={s.ai_smart_model} onChange={(e) => save.mutate({ ai_smart_model: e.target.value })}>
-            {Object.entries(MODEL_LABEL).map(([v, l]) => (
-              <option key={v} value={v}>
-                {l}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      {s.ai_configured && (
-        <Button className="mt-4" size="sm" loading={categorize.isPending} onClick={() => categorize.mutate()}>
-          Categorize waiting transactions now
-        </Button>
-      )}
-    </Card>
-  );
+  return <AiCard s={s} card={(props) => <Card {...props} />} />;
 }
 
 // ---------------------------------------------------------------------------

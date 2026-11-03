@@ -16,7 +16,7 @@
                                                                          └──────────┬──────────────────┘
                                                                                     │ only when needed
                                                                           ┌─────────▼─────────┐
-                                                                          │ Claude API        │
+                                                                          │ AI (your key)     │
                                                                           └───────────────────┘
 ```
 
@@ -39,7 +39,7 @@
    (Mədaxil/Məxaric, signs, refund words…), type (purchase, transfer, cash withdrawal, income, refund, fee),
    merchant, card last 4 digits, date/time (Baku time) and balance after. Each result has a confidence score.
 4. **AI double‑check:** if the parser is unsure (or a purchase has no merchant), the message is also read by
-   Claude with a strict JSON schema; the parser's exact numbers are kept when it was confident about them.
+   the AI model with a strict JSON schema; the parser's exact numbers are kept when it was confident about them.
 5. **Account:** the card's last 4 digits select the account; unknown cards are created automatically.
    Non‑AZN amounts are converted with official CBAR rates.
 6. **Categorize** (`worker/services/categorize.ts`), cheapest and most trustworthy first:
@@ -136,17 +136,26 @@ everything that moved on a card, transfers included, so a card's money flow adds
 
 ## AI usage and cost control (`worker/services/ai.ts`)
 
-| Task | Default model | When |
+Every person brings their own key (Claude, ChatGPT or Gemini) in Settings → AI. Keys are sealed with
+`ENCRYPTION_KEY` per user (`user_settings`); one provider-neutral layer (`worker/services/aiproviders/`) gives every
+call site the same two operations, `structuredCall` and `chatWithTools`, with an adapter per provider. The owner's
+`ANTHROPIC_API_KEY` secret is an optional fallback for user 1 only.
+
+| Task | Model slot | When |
 |---|---|---|
-| Categorize new merchants (batched, ≤25 per request) | Claude Haiku 5.5 | once per new merchant |
-| Read unusual messages | Claude Haiku 5.5 | only when the parser is unsure |
-| Read PDF statements | Claude Haiku 5.5 | when you import |
-| Weekly / monthly / on‑demand reports | Claude Opus 5.5 | weekly, monthly, or when you ask |
-| Ask AI (chat with tools over your data) | Claude Opus 5.5 | when you ask |
+| Categorize new merchants (batched, ≤25 per request) | fast | once per new merchant |
+| Read unusual messages | fast | only when the parser is unsure |
+| Read PDF statements | fast | when you import |
+| Weekly / monthly / on‑demand reports | smart | weekly, monthly, or when you ask |
+| Ask AI (chat with tools over your data) | smart | when you ask |
+
+The model lists come live from the provider with your key; defaults are picked by name (haiku/mini/flash for fast,
+opus/sonnet/pro for smart).
 
 - Every request's token usage and cost is recorded (`ai_usage` table) and shown in Settings → AI.
-- A **monthly spending limit** (default $3) is checked before every request; when reached, AI pauses and the app
-  keeps working with rules only. Merchants waiting for AI are picked up after the limit resets.
+- A **monthly token limit** (default 2,000,000) and, where the price is known (Claude), a **monthly spending
+  limit** (default $3) are checked before every request; when reached, or when the provider rejects the key,
+  AI pauses and the app keeps working with rules only. Merchants waiting for AI are picked up after the limit resets.
 - Reports send **aggregated statistics** (totals, category comparisons with your own averages, habit counters such
   as delivery orders, taxi rides, late‑night purchases, subscriptions and anomalies), not your raw transaction list.
 - The chat uses tools (`spending_summary`, `find_transactions`, `budgets_and_subscriptions`) so numbers come from
