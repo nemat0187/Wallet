@@ -21,6 +21,7 @@ import importRoutes from "./routes/imports";
 import settingsRoutes, { telegramWebhook } from "./routes/settings";
 import dashboardRoutes from "./routes/dashboards";
 import noteRoutes from "./routes/notes";
+import goalRoutes from "./routes/goals";
 import { ProviderError } from "./services/aiproviders/types";
 import adminRoutes from "./routes/admin";
 
@@ -94,6 +95,7 @@ app.route("/api/budgets", budgetRoutes);
 app.route("/api/analytics", analyticsRoutes);
 app.route("/api/dashboards", dashboardRoutes);
 app.route("/api/notes", noteRoutes);
+app.route("/api/goals", goalRoutes);
 app.route("/api/admin", adminRoutes);
 app.route("/api/ai", aiRoutes);
 app.route("/api/import", importRoutes);

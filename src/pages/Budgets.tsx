@@ -11,6 +11,7 @@ import { PageHeader } from "../components/Layout";
 import { Meter } from "../components/charts";
 import { rollupSpending } from "../lib/spending";
 import { RangeBudgetsSection } from "../components/RangeBudgets";
+import { GoalsSection } from "../components/Goals";
 
 interface BudgetsData {
   period: Period;
@@ -181,6 +182,8 @@ export default function Budgets() {
       </Section>
 
       <RangeBudgetsSection ranges={d.ranges ?? []} />
+
+      <GoalsSection />
 
       {unbudgeted.length > 0 && (
         <Section title="Without a budget">

@@ -24,7 +24,7 @@ const hash = createHash("sha256").update(token).digest("hex");
 const now = new Date().toISOString();
 const expires = new Date(Date.now() + 86_400_000).toISOString();
 const wipeUser2 = () => {
-  for (const t of ["notes", "transactions", "raw_messages", "merchants", "accounts", "categories", "budgets", "api_tokens", "rules", "dashboards", "range_budgets", "insights", "ai_usage", "notifications_sent", "sessions"]) sql(`DELETE FROM ${t} WHERE user_id = @U2@`);
+  for (const t of ["notes", "goals", "transactions", "raw_messages", "merchants", "accounts", "categories", "budgets", "api_tokens", "rules", "dashboards", "range_budgets", "insights", "ai_usage", "notifications_sent", "sessions"]) sql(`DELETE FROM ${t} WHERE user_id = @U2@`);
   sql("DELETE FROM user_settings WHERE user_id = @U2@");
   sql("DELETE FROM users WHERE id = @U2@");
 };
@@ -68,6 +68,7 @@ const txId = ownerTx[0].id;
 const ownerAccounts = (await owner("GET", "/accounts")).data;
 const ownerCounts = sql("SELECT (SELECT COUNT(*) FROM transactions WHERE user_id = 1) tx, (SELECT COUNT(*) FROM accounts WHERE user_id = 1) acc, (SELECT COUNT(*) FROM merchants WHERE user_id = 1) mer, (SELECT COUNT(*) FROM categories WHERE user_id = 1) cat")[0];
 const ownerNoteId = (await owner("POST", "/notes", { title: "owner secret", body: "x" })).data.id;
+const ownerGoal = (await owner("POST", "/goals", { name: "owner goal", target: 100000, deadline: null })).data.id;
 const ownerRule = (await owner("POST", "/rules", { conditions: [{ field: "merchant", op: "contains", value: "zzz" }], set_tags: "t" })).data.id;
 const ownerDash = (await owner("POST", "/dashboards", { name: "owner dash", widgets: [] })).data.id;
 
@@ -109,6 +110,7 @@ await other("POST", "/transactions/bulk", { ids: ownerTx.map((t) => t.id), delet
 await other("DELETE", `/transactions/${txId}`);
 await other("PUT", `/notes/${ownerNoteId}`, { title: "HACKED", body: "HACKED" });
 await other("DELETE", `/notes/${ownerNoteId}`);
+const goalHit = [(await other("PUT", `/goals/${ownerGoal}`, { name: "HACKED", target: 1, deadline: null })).status, (await other("POST", `/goals/${ownerGoal}/contribute`, { amount: 5 })).status, (await other("DELETE", `/goals/${ownerGoal}`)).status];
 await other("DELETE", `/rules/${ownerRule}`);
 await other("PUT", `/dashboards/${ownerDash}`, { name: "HACKED", widgets: [] });
 await other("DELETE", `/dashboards/${ownerDash}`);
@@ -119,6 +121,8 @@ const after = (await owner("GET", `/transactions/${txId}`)).data;
 check("owner's transaction unchanged and still there", after.note === before.note && after.amount === before.amount && after.tags === before.tags && after.id === txId);
 const ownerCountsAfter = sql("SELECT (SELECT COUNT(*) FROM transactions WHERE user_id = 1) tx, (SELECT COUNT(*) FROM accounts WHERE user_id = 1) acc, (SELECT COUNT(*) FROM merchants WHERE user_id = 1) mer, (SELECT COUNT(*) FROM categories WHERE user_id = 1) cat")[0];
 check("owner's row counts unchanged", JSON.stringify(ownerCounts) === JSON.stringify(ownerCountsAfter), `${JSON.stringify(ownerCounts)} -> ${JSON.stringify(ownerCountsAfter)}`);
+const ownerGoalNow = (await owner("GET", "/goals")).data.find((g) => g.id === ownerGoal);
+check("the other person cannot see, change or delete the owner's goal", (await other("GET", "/goals")).data.length === 0 && goalHit[0] === 404 && goalHit[1] === 404 && ownerGoalNow?.name === "owner goal" && ownerGoalNow.saved === 0, JSON.stringify(goalHit));
 const note = (await owner("GET", "/notes")).data.find((n) => n.id === ownerNoteId);
 check("owner's note untouched", note?.title === "owner secret");
 check("owner's rule still there", (await owner("GET", "/rules")).data.some((r) => r.id === ownerRule));

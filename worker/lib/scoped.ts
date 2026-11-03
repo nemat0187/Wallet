@@ -29,6 +29,7 @@ export const PER_USER_TABLES = [
   "api_tokens",
   "sessions",
   "notifications_sent",
+  "goals",
 ] as const;
 const PER_USER = new Set<string>(PER_USER_TABLES);
 const TABLE_WORDS = new RegExp(`\\b(${PER_USER_TABLES.join("|")})\\b`, "gi");
