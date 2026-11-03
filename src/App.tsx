@@ -27,6 +27,7 @@ const Budgets = page(() => import("./pages/Budgets"));
 const Insights = page(() => import("./pages/Insights"));
 const Analytics = page(() => import("./pages/Analytics"));
 const Dashboards = page(() => import("./pages/Dashboards"));
+const Admin = page(() => import("./pages/Admin"));
 const Notes = page(() => import("./pages/Notes"));
 const Categories = page(() => import("./pages/Categories"));
 const Merchants = page(() => import("./pages/Merchants"));
@@ -40,7 +41,7 @@ export default function App() {
   const qc = useQueryClient();
   const me = useQuery({
     queryKey: ["me"],
-    queryFn: () => get<{ authenticated: boolean; password_configured: boolean }>("/auth/me"),
+    queryFn: () => get<{ authenticated: boolean; password_configured: boolean; google_configured: boolean; registration_open: boolean }>("/auth/me"),
     staleTime: Infinity,
   });
   // null = follow the server's answer; true/false = what happened in this tab since.
@@ -61,6 +62,8 @@ export default function App() {
     return (
       <Login
         passwordConfigured={me.data?.password_configured ?? true}
+        googleConfigured={me.data?.google_configured ?? false}
+        registrationOpen={me.data?.registration_open ?? false}
         onLoggedIn={() => {
           dropCachedData();
           setAuthed(true);
@@ -80,6 +83,7 @@ export default function App() {
           <Route path="analytics" element={<Analytics />} />
           <Route path="dashboards" element={<Dashboards />} />
           <Route path="notes" element={<Notes />} />
+          <Route path="admin" element={<Admin />} />
           <Route path="categories" element={<Categories />} />
           <Route path="merchants" element={<Merchants />} />
           <Route path="accounts" element={<Accounts />} />

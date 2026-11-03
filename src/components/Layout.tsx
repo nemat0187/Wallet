@@ -16,6 +16,7 @@ import {
   Plus,
   LayoutDashboard,
   StickyNote,
+  UsersRound,
 } from "lucide-react";
 import { clsx } from "../lib/ui";
 import { useBootstrap } from "../lib/data";
@@ -44,6 +45,13 @@ const secondary = [
 ];
 
 export const MORE_LINKS = secondary;
+const adminLink = { to: "/admin", label: "Users & access", icon: UsersRound };
+
+/** The "more" links, plus the admin page for admins. */
+export function useMoreLinks() {
+  const { data } = useBootstrap();
+  return data?.user?.role === "admin" ? [...secondary.slice(0, -1), adminLink, secondary[secondary.length - 1]] : secondary;
+}
 
 function Badge({ n }: { n: number }) {
   if (!n) return null;
@@ -60,7 +68,9 @@ export default function Layout() {
   const location = useLocation();
   const review = data?.counts.review ?? 0;
   const failed = data?.counts.failed ?? 0;
-  const onMorePage = secondary.some((s) => location.pathname.startsWith(s.to)) || location.pathname === "/more";
+  const links = useMoreLinks();
+  const pending = data?.counts.pending_users ?? 0;
+  const onMorePage = links.some((s) => location.pathname.startsWith(s.to)) || location.pathname === "/more";
 
   return (
     <QuickAddContext.Provider value={() => setQuickAdd(true)}>
@@ -82,8 +92,8 @@ export default function Layout() {
               <SideLink key={item.to} {...item} badge={item.to === "/activity" ? review : 0} />
             ))}
             <div className="my-3 border-t border-line" />
-            {secondary.map((item) => (
-              <SideLink key={item.to} {...item} badge={item.to === "/inbox" ? failed : 0} />
+            {links.map((item) => (
+              <SideLink key={item.to} {...item} badge={item.to === "/inbox" ? failed : item.to === "/admin" ? pending : 0} />
             ))}
           </nav>
         </aside>
@@ -113,7 +123,7 @@ export default function Layout() {
               </button>
             </div>
             <TabLink {...primary[2]} />
-            <TabLink to="/more" label="More" icon={Menu} forceActive={onMorePage} badge={failed} />
+            <TabLink to="/more" label="More" icon={Menu} forceActive={onMorePage} badge={failed + pending} />
           </div>
         </nav>
       </div>

@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import QRCode from "qrcode";
-import { Copy, KeyRound, Smartphone, Sparkles, Send, CalendarDays, ShieldCheck, Database, Palette, Trash2, LogOut, CheckCircle2 } from "lucide-react";
+import { Copy, KeyRound, Smartphone, Sparkles, Send, CalendarDays, ShieldCheck, Database, Palette, Trash2, LogOut, CheckCircle2, UserRound } from "lucide-react";
 import type { Settings as SettingsT } from "@shared/types";
 import { del, get, patch, post } from "../lib/api";
 import { useBootstrap, useRefresh } from "../lib/data";
@@ -21,6 +21,7 @@ export default function SettingsPage() {
   return (
     <div className="max-w-3xl">
       <PageHeader title="Settings" />
+      <AccountCard />
       <PhoneConnection origin={boot.data.origin} lastMessageAt={s.last_message_at} />
       <AiSettings s={s} />
       <TelegramSettings s={s} />
@@ -29,6 +30,39 @@ export default function SettingsPage() {
       <Appearance />
       <DataSection />
     </div>
+  );
+}
+
+function AccountCard() {
+  const boot = useBootstrap();
+  const me = useQuery({ queryKey: ["me"], queryFn: () => get<{ google_configured: boolean }>("/auth/me"), staleTime: 60_000 });
+  const user = boot.data?.user;
+  const result = new URLSearchParams(useLocation().search).get("google");
+  const note = {
+    linked: "Google account linked. You can now sign in with Google.",
+    taken: "That Google account already belongs to another user.",
+    expired: "The link request expired. Please try again.",
+  }[result ?? ""];
+  if (!user) return null;
+  return (
+    <Card id="account" icon={<UserRound size={20} />} title="Account">
+      <p className="font-medium">{user.name || "Owner"}</p>
+      <p className="text-sm text-ink-3">
+        {user.email ?? "No email linked yet"} · {user.role === "admin" ? "Admin" : "Member"}
+      </p>
+      {note && <p className={clsx("mt-3 rounded-xl px-3 py-2 text-sm", result === "linked" ? "bg-good-soft text-good" : "bg-warn-soft text-warn")}>{note}</p>}
+      {!user.email && me.data?.google_configured && (
+        <div className="mt-4">
+          <p className="mb-2 text-sm text-ink-2">Link your Google account to sign in with Google as well as with your password. Your data stays the same.</p>
+          <a href="/api/auth/google/link">
+            <Button>Link Google account</Button>
+          </a>
+        </div>
+      )}
+      {!user.email && me.data && !me.data.google_configured && (
+        <p className="mt-3 text-sm text-ink-3">Google sign-in isn't set up yet. See the setup guide, step “Sign in with Google”.</p>
+      )}
+    </Card>
   );
 }
 

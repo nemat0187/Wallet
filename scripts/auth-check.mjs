@@ -131,7 +131,7 @@ try {
   check("the owner can link their Google account", linked.headers.get("location") === "/settings?google=linked" && sql("SELECT email FROM users WHERE id = 1")[0].email === ownerEmail);
   const viaGoogle = await googleSignIn({ sub: sql("SELECT google_sub s FROM users WHERE id = 1")[0].s, email: ownerEmail, name: "Owner Person" });
   check("the owner then signs in with Google as the same account", viaGoogle.location === "/" && viaGoogle.cookies.length === 1);
-  sql("UPDATE users SET email = NULL, google_sub = NULL WHERE id = 1");
+  sql("UPDATE users SET email = NULL, google_sub = NULL, name = 'Owner' WHERE id = 1");
 
   // 9. The password login still works.
   check("the owner password still works", (await fetch(`${BASE}/api/auth/login`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password }) })).status === 200);

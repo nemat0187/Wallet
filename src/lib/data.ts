@@ -9,7 +9,8 @@ export interface Bootstrap {
   settings: Settings;
   categories: Category[];
   accounts: Account[];
-  counts: { review: number; failed: number; tokens: number; transactions: number };
+  counts: { review: number; failed: number; tokens: number; transactions: number; pending_users: number };
+  user: { id: number; email: string | null; name: string; role: "admin" | "user" } | null;
   origin: string;
 }
 
