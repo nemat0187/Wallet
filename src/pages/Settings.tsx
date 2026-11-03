@@ -564,6 +564,7 @@ function Security() {
     queryKey: ["sessions"],
     queryFn: () => get<{ id: string; created_at: string; last_seen_at: string; user_agent: string | null; ip: string | null; current: boolean }[]>("/auth/sessions"),
   });
+  const revokeOne = useMutation({ mutationFn: (id: string) => del(`/auth/sessions/${id}`), onSuccess: () => sessions.refetch() });
   const revoke = useMutation({ mutationFn: () => post("/auth/sessions/revoke-others"), onSuccess: () => sessions.refetch() });
   const logout = useMutation({
     mutationFn: () => {
@@ -582,12 +583,19 @@ function Security() {
       <h3 className="mt-6 font-semibold">Logged-in devices</h3>
       <ul className="mt-2 divide-y divide-line rounded-2xl border border-line text-sm">
         {sessions.data?.map((x) => (
-          <li key={x.id} className="px-4 py-2.5">
-            <span className="block truncate">{describeAgent(x.user_agent)}</span>
-            <span className="block text-[12px] text-ink-3">
-              {x.current ? "This device · " : ""}last active {ago(x.last_seen_at)}
-              {x.ip ? ` · ${x.ip}` : ""}
+          <li key={x.id} className="flex items-center gap-3 px-4 py-2.5">
+            <span className="min-w-0 flex-1">
+              <span className="block truncate">{describeAgent(x.user_agent)}</span>
+              <span className="block text-[12px] text-ink-3">
+                {x.current ? "This device · " : ""}last active {ago(x.last_seen_at)}
+                {x.ip ? ` · ${x.ip}` : ""}
+              </span>
             </span>
+            {!x.current && (
+              <Button size="sm" variant="ghost" loading={revokeOne.isPending && revokeOne.variables === x.id} onClick={() => revokeOne.mutate(x.id)}>
+                Log out
+              </Button>
+            )}
           </li>
         ))}
       </ul>

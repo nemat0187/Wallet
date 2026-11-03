@@ -205,6 +205,26 @@ notification).
 
 ---
 
+## Letting other people in (Google sign-in)
+
+Other people sign in with their Google account. They ask for access, you approve them, then they can use their own private wallet (their own cards, categories and budgets; you cannot see their money screens and they cannot see yours). You still sign in with your password.
+
+**One-time setup (about 10 minutes, free):**
+
+1. Open <https://console.cloud.google.com>, create a project (any name), then go to **APIs & Services → OAuth consent screen**. Choose **External**, fill in an app name (e.g. “Wallet”) and your email, save. At the end set the publishing status to **In production**. Sign-in with only the basic profile and email needs no review from Google; if you leave it on “Testing”, only people you list as test users can sign in.
+2. **APIs & Services → Credentials → Create credentials → OAuth client ID → Web application.** Under **Authorized redirect URIs** add exactly: `https://YOUR-APP-ADDRESS/api/auth/google/callback` (your address is the link you open the app with, e.g. `https://wallet.yourname.workers.dev`). Create it and copy the **Client ID** and **Client secret**.
+3. In GitHub: **Settings → Secrets and variables → Actions → New repository secret**. Add `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`. Then **Actions → Deploy → Run workflow**.
+4. Open the app, **Settings → Account → Link Google account** and choose your Google account. From now on you can sign in with Google as the same account too.
+5. Open **More → Users & access** and switch on **Accept new sign-up requests**.
+
+**Day to day:** tell a friend the address of the app. They tap **Continue with Google**; their request shows up in **Users & access** (you also get a Telegram message if you linked Telegram, and a badge on More). Tap **Approve** and they can sign in. You can **switch off** or **delete** anyone later (deleting removes all their data). Switch the sign-up switch off whenever you don't want new requests.
+
+## Sign-in security
+
+- **Two-step verification:** the first time someone signs in they are offered an authenticator app code (Google Authenticator, Microsoft Authenticator…) with 8 recovery codes. It can be skipped and turned on or off later in **Settings → Security**. Keep the recovery codes safe: each works once if the phone is lost.
+- **PIN:** on every new phone or computer the app asks for a PIN (4 to 6 digits, entered twice). It opens the app on that device only and is kept on the device, never sent to the server. The app locks again after the time you choose (Settings → Security; default 1 minute). Five wrong tries sign you out of that device. Forgot it? Tap “Forgot PIN? Sign out”, sign in again and make a new one.
+- **Devices:** **Settings → Security → Logged-in devices** lists where you are signed in; you can log out any of them. With Telegram linked, signing in from a new device sends you a message.
+
 ## Updating the app
 
 When new code is added to this repository, open **Actions → Deploy → Run workflow** again.
@@ -228,6 +248,11 @@ an email code before the login page even loads:
 | Deploy says secrets are missing | Check the secret names in step 3 (exact spelling, no spaces). |
 | `Authentication error` / `10000` | The API token is wrong or lacks permissions. Create a new one (step 2b) — don't forget **D1 → Edit**. |
 | `You need to register a workers.dev subdomain` | Do step 1.2: open Workers & Pages once and choose a subdomain. Then run Deploy again. |
+| Google says “redirect_uri_mismatch” | The address in Google Cloud must match exactly: `https://YOUR-APP-ADDRESS/api/auth/google/callback` (no trailing slash, https). |
+| “Continue with Google” doesn't appear | `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` are missing in GitHub secrets, or you haven't run Deploy since adding them. |
+| Someone signs in with Google but sees “Request sent” | That is normal: approve them in **More → Users & access**. If they never appear there, switch on “Accept new sign-up requests” first. |
+| I changed phones and lost my authenticator | Sign in with a recovery code (type it instead of the 6-digit code), then turn two-step off and on again in Settings → Security. |
+| Two-step or a stored secret says the app's encryption key is missing | Run the Deploy workflow again; it creates the key the first time and keeps it afterwards. |
 | Login page says no password is set | Add `APP_PASSWORD` (step 3) and run Deploy again. |
 | “Too many attempts” at login | Wait 15 minutes. This protects you against password guessing. |
 | Payments don't appear | **Settings → Phone connection** shows when the last message arrived. If “never”, the phone automation isn't running (check permissions, battery settings on Android, “Run Immediately” on iPhone). If messages arrive but aren't understood, they're listed under **Bank messages** — tap *Try again* after AI is enabled, or send a sample (with numbers changed) so the parser can be improved. |

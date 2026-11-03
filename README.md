@@ -47,6 +47,9 @@ It runs for free on your own Cloudflare account and only you can open it.
 - **Fix what the bank got wrong.** Change a transaction's amount, direction, date, time or card; your card balance
   follows. Deleting a transaction also undoes its effect on the balance. “Run my rules again” re‑applies your rules
   to one transaction.
+- **More than one person.** Friends can ask for access with "Continue with Google"; you approve each person and
+  everyone gets a completely separate wallet. Two-step verification with an authenticator app (and recovery codes),
+  a PIN on every device and a list of signed-in devices keep accounts safe.
 - **Also:** cash expenses with one tap (or by Telegram: `12.5 taxi`), PDF/CSV statement import with duplicate
   detection, select many transactions to recategorize / tag as transfers / hide / delete at once, CSV/JSON export,
   dark mode, installable on your phone.

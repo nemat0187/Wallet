@@ -91,6 +91,15 @@ sign-in methods come in later releases; until then nothing visible changes.
 - Free-tier note: all users share one database and the hourly job runs users one after another; before opening
   registration to many people, re-check Cloudflare's current limits.
 
+## Sign-in, approval, two-step verification and PIN
+
+- **Who can sign in:** `users.status` is `pending` (asked for access), `active` or `disabled`; `role` is `admin` or `user`. The owner (user 1) signs in with `APP_PASSWORD` and can link a Google account. Everyone else uses "Continue with Google": the server-side authorization-code flow in `worker/routes/auth.ts` / `worker/services/google.ts` (state and nonce in a SameSite=Lax cookie, id_token claims checked: issuer, audience, expiry, nonce, verified email). A new Google account becomes a `pending` user only while sign-ups are open (installation-wide setting `registration_open`, off by default), with a cap of 20 waiting requests and 5 requests per hour per address; admins get a Telegram message. `worker/routes/admin.ts` approves, rejects, switches off and deletes users; admins never receive financial data from it.
+- **Same last step for every method (`signIn`):** users with two-step verification get a signed, 5-minute "password done" cookie (`wallet_mfa`, HMAC with a key derived from `ENCRYPTION_KEY`) and a session is created only after `/auth/mfa/verify` accepts a code. A wrong code counts against the address and against the account (5 tries, 15 minute lock), so the 6-digit code cannot be guessed.
+- **Two-step secrets** are AES-GCM encrypted (`worker/lib/secretbox.ts`, `ENCRYPTION_KEY` created once by `scripts/deploy.mjs` and never replaced). A code's 30-second window can be used once. Recovery codes are stored hashed, work once, and are replaced as a set. Skipping the offer is remembered per user.
+- **PIN** (`src/lib/pin.ts`, `src/components/PinGate.tsx`): browser-only. A salted PBKDF2-SHA256 hash (200,000 rounds) of a 4-6 digit PIN is kept in local storage together with the user id it belongs to; nothing is sent to the server. The app locks after the chosen idle time, on a fresh start and on "Lock now"; five wrong tries sign the user out and wipe the PIN; signing out always wipes it.
+- **Devices:** sessions are listed per user and can be removed one by one; a short hash of each browser's User-Agent is remembered and a new one triggers a Telegram message (the first device is remembered silently).
+- Checks: `npm run check:auth` runs the whole flow (sign-up, approval, admin rules, two-step, recovery codes, lockout, devices) against a local server with a mock Google (65 checks); `npm run check:isolation` covers data separation (34 checks).
+
 ## Card balances
 
 `accounts.balance` is a snapshot: the “Balans” from the newest bank message, or a running sum for the cash wallet.

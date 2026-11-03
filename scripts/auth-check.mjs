@@ -168,6 +168,7 @@ try {
 
   // ===== Two-step verification =====
   sql("DELETE FROM login_attempts");
+  sql("DELETE FROM user_settings WHERE user_id = 1 AND key IN ('mfa_skipped', 'totp_secret', 'totp_pending_secret', 'totp_last_step', 'recovery_codes')");
   const sec0 = (await owner("GET", "/bootstrap")).data.security;
   check("MFA starts off and not skipped", sec0.enabled === false && sec0.skipped === false, JSON.stringify(sec0));
   const setup = await owner("POST", "/auth/mfa/setup");
@@ -243,6 +244,21 @@ try {
   await call(l4.session)("POST", "/auth/mfa/skip");
   check("skipping is remembered", (await call(l4.session)("GET", "/bootstrap")).data.security.skipped === true);
   sql("DELETE FROM user_settings WHERE user_id = 1 AND key IN ('mfa_skipped', 'totp_secret', 'totp_pending_secret', 'totp_last_step', 'recovery_codes')");
+
+
+  // ===== Devices =====
+  const dA = await passwordLogin();
+  const dB = await passwordLogin();
+  const devA = call(dA.session);
+  const listed = (await devA("GET", "/auth/sessions")).data;
+  const other = listed.find((x) => !x.current);
+  check("the device list shows this device and the others", listed.some((x) => x.current) && listed.length >= 2, JSON.stringify(listed.length));
+  check("this device cannot be removed from the list", (await devA("DELETE", `/auth/sessions/${listed.find((x) => x.current).id}`)).status === 400);
+  check("a bad device id is refused", (await devA("DELETE", "/auth/sessions/not-an-id")).status === 400);
+  check("one other device can be logged out", (await devA("DELETE", `/auth/sessions/${other.id}`)).status === 200);
+  const stillWorking = [dB].filter((x) => x.session);
+  check("the list shrinks by one", (await devA("GET", "/auth/sessions")).data.length === listed.length - 1 && stillWorking.length === 1);
+  check("known devices are remembered for the new-device alert", JSON.parse(sql("SELECT value FROM user_settings WHERE user_id = 1 AND key = 'known_devices'")[0]?.value ?? "[]").length >= 1);
 
   // 9. The password login still works.
   check("the owner password still works", (await fetch(`${BASE}/api/auth/login`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password }) })).status === 200);

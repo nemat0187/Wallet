@@ -254,6 +254,15 @@ app.get("/sessions", async (c) => {
   );
 });
 
+/** Log out one device (by the short id shown in the list). */
+app.delete("/sessions/:id", async (c) => {
+  const id = c.req.param("id");
+  if (!/^[0-9a-f]{12}$/.test(id)) throw new HTTPException(400, { message: "Unknown device" });
+  if (c.get("sessionHash").startsWith(id)) throw new HTTPException(400, { message: "That is this device. Use Log out instead." });
+  await run(c.env.DB, "DELETE FROM sessions WHERE token_hash LIKE ?", `${id}%`);
+  return c.json({ ok: true });
+});
+
 /** Log out every other device. */
 app.post("/sessions/revoke-others", async (c) => {
   await run(c.env.DB, "DELETE FROM sessions WHERE token_hash <> ?", c.get("sessionHash"));

@@ -6,7 +6,10 @@ import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 import type { AppEnv } from "../env";
 import { first, run, nowIso } from "../lib/db";
 import { randomToken, sha256Hex } from "../lib/crypto";
-import { rawDb } from "../lib/scoped";
+import { forUser, rawDb } from "../lib/scoped";
+import { describeAgent } from "../lib/ua";
+import { getSetting, setSetting } from "../services/settings";
+import { notifyOwner, escapeHtml } from "../services/telegram";
 
 export const SESSION_COOKIE = "wallet_session";
 const SESSION_DAYS = 30;
@@ -35,6 +38,27 @@ export async function createSession(c: Context<AppEnv>, userId: number): Promise
     path: "/",
     expires,
   });
+  c.executionCtx.waitUntil(alertOnNewDevice(c, userId).catch((e) => console.error("new-device alert", e)));
+}
+
+/**
+ * Remember which browsers/phones this user has signed in from (a short hash of the User-Agent) and send a Telegram
+ * message when a new one appears. The first device is remembered silently.
+ */
+async function alertOnNewDevice(c: Context<AppEnv>, userId: number): Promise<void> {
+  const ua = c.req.header("user-agent") ?? "";
+  const env = forUser(c.env, userId);
+  const id = (await sha256Hex(ua)).slice(0, 16);
+  let known: string[] = [];
+  try {
+    known = JSON.parse((await getSetting(env.DB, "known_devices")) ?? "[]");
+  } catch {
+    known = [];
+  }
+  if (known.includes(id)) return;
+  await setSetting(env.DB, "known_devices", JSON.stringify([...known, id].slice(-20)));
+  if (known.length === 0) return;
+  await notifyOwner(env, `🔐 New sign-in from <b>${escapeHtml(describeAgent(ua))}</b> (${escapeHtml(clientIp(c))}). If this wasn't you, open Settings → Security and log that device out.`);
 }
 
 /** The session (and its user) if the request carries a valid one and the user is active, else null. */
