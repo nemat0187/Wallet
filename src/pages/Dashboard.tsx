@@ -9,6 +9,7 @@ import { useBootstrap, useCategories } from "../lib/data";
 import { Empty, Money, Section, Spinner, clsx } from "../lib/ui";
 import { BarList, Meter, PaceChart } from "../components/charts";
 import { TxEditor, TxList } from "../components/Transactions";
+import { ForecastCard } from "../components/Forecast";
 import { HomeGrid } from "../components/HomeLayout";
 import { RangeBudgetRow } from "../components/RangeBudgets";
 import { TransferPairsBanner, useTransferPairs } from "../components/Transfers";
@@ -131,6 +132,7 @@ export default function Dashboard() {
         </dl>
       </section>
     ),
+    forecast: d.period.is_current ? <ForecastCard /> : null,
     attention: (d.counts.review > 0 || d.counts.failed > 0 || pairCount > 0) ? (
     <div className="flex flex-col gap-2">
       <Attention review={d.counts.review} failed={d.counts.failed} />

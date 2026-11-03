@@ -2,7 +2,7 @@
 
 import type { Widget } from "./widgets";
 
-export const HOME_BLOCKS = ["hero", "attention", "where", "latest", "cards", "budgets", "coach", "places"] as const;
+export const HOME_BLOCKS = ["hero", "forecast", "attention", "where", "latest", "cards", "budgets", "coach", "places"] as const;
 export type HomeBlockId = (typeof HOME_BLOCKS)[number];
 
 export type HomeColumn = "main" | "aside" | "wide";
@@ -18,6 +18,7 @@ export interface HomeItem {
 
 export const HOME_BLOCK_LABELS: Record<HomeBlockId, string> = {
   hero: "Overview",
+  forecast: "Cash after bills",
   attention: "Things to check",
   where: "Where it went",
   latest: "Latest transactions",
@@ -29,6 +30,7 @@ export const HOME_BLOCK_LABELS: Record<HomeBlockId, string> = {
 
 const DEFAULT_COLUMN: Record<HomeBlockId, HomeColumn> = {
   hero: "main",
+  forecast: "main",
   attention: "main",
   where: "main",
   latest: "main",

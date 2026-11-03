@@ -3,7 +3,7 @@ import { defaultHomeLayout, moveInColumn, resolveHomeLayout, type HomeItem } fro
 
 describe("resolveHomeLayout", () => {
   it("uses the default layout when nothing is saved", () => {
-    expect(resolveHomeLayout(null, []).map((i) => i.id)).toEqual(["hero", "attention", "where", "latest", "cards", "budgets", "coach", "places"]);
+    expect(resolveHomeLayout(null, []).map((i) => i.id)).toEqual(["hero", "forecast", "attention", "where", "latest", "cards", "budgets", "coach", "places"]);
   });
 
   it("keeps the saved order and brings back missing blocks", () => {
@@ -14,7 +14,7 @@ describe("resolveHomeLayout", () => {
     const out = resolveHomeLayout(saved, []);
     expect(out.slice(0, 2).map((i) => i.id)).toEqual(["budgets", "hero"]);
     expect(out[1].hidden).toBe(true);
-    expect(out).toHaveLength(8);
+    expect(out).toHaveLength(9);
   });
 
   it("adds pinned dashboards full width and drops unpinned or unknown ones", () => {
@@ -35,8 +35,8 @@ describe("resolveHomeLayout", () => {
 
 describe("moveInColumn", () => {
   it("swaps with the neighbour in the same column only", () => {
-    const items = defaultHomeLayout(); // main: hero, attention, where, latest | aside: cards, budgets, coach, places
-    expect(moveInColumn(items, "cards", 1).map((i) => i.id).slice(4, 6)).toEqual(["budgets", "cards"]);
+    const items = defaultHomeLayout(); // main: hero, forecast, attention, where, latest | aside: cards, budgets, coach, places
+    expect(moveInColumn(items, "cards", 1).map((i) => i.id).slice(5, 7)).toEqual(["budgets", "cards"]);
     expect(moveInColumn(items, "latest", 1)).toEqual(items); // last of its column
     expect(moveInColumn(items, "cards", -1)).toEqual(items); // first of its column
   });
