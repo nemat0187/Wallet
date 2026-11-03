@@ -6,6 +6,8 @@ import { body } from "../lib/http";
 import { safeEqual } from "../lib/crypto";
 import { all, run } from "../lib/db";
 import { clientIp, createSession, destroySession, validateSession } from "../auth/session";
+import { forUser } from "../lib/scoped";
+import { OWNER_ID } from "../lib/userkeys";
 import { lockedFor, recordFailure, resetFailures } from "../auth/ratelimit";
 import { generateTotpSecret, totpUri, verifyTotp } from "../auth/totp";
 import { getRawSettings, getSetting, setSetting } from "../services/settings";
@@ -36,7 +38,7 @@ app.post("/login", async (c) => {
     }
   }
   await resetFailures(c.env.DB, ip);
-  await createSession(c);
+  await createSession(c, OWNER_ID);
   return c.json({ ok: true });
 });
 
@@ -58,7 +60,9 @@ app.use("/*", async (c, next) => {
   if (c.req.method !== "GET" && origin && origin !== new URL(c.req.url).origin) {
     throw new HTTPException(403, { message: "Cross-site request blocked" });
   }
-  c.set("sessionHash", session);
+  c.set("sessionHash", session.hash);
+  c.set("userId", session.userId);
+  c.env = forUser(c.env, session.userId);
   await next();
 });
 

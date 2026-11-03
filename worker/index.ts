@@ -6,6 +6,7 @@ import { Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
 import type { AppEnv, Env } from "./env";
 import { validateSession } from "./auth/session";
+import { forUser } from "./lib/scoped";
 import { ensureSeeded } from "./services/seed";
 import { runScheduled } from "./services/cron";
 import authRoutes from "./routes/auth";
@@ -50,7 +51,7 @@ app.route("/api/ingest", publicIngest);
 app.route("/api/telegram", telegramWebhook);
 app.route("/api/auth", authRoutes);
 
-// Everything else requires the owner's session. Mutations must come from this site.
+// Everything else requires a signed-in user. Mutations must come from this site.
 app.use("/api/*", async (c, next) => {
   const session = await validateSession(c);
   if (!session) throw new HTTPException(401, { message: "Please log in" });
@@ -58,7 +59,10 @@ app.use("/api/*", async (c, next) => {
     const origin = c.req.header("origin");
     if (origin && origin !== new URL(c.req.url).origin) throw new HTTPException(403, { message: "Cross-site request blocked" });
   }
-  c.set("sessionHash", session);
+  c.set("sessionHash", session.hash);
+  c.set("userId", session.userId);
+  // From here on every route sees only this user's rows (worker/lib/scoped.ts).
+  c.env = forUser(c.env, session.userId);
   await next();
 });
 

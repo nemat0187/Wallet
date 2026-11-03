@@ -2,6 +2,8 @@ import type { Hono } from "hono";
 
 export interface Env {
   DB: D1Database;
+  /** Set by forUser(): the user this Env (and its DB) is limited to. */
+  userId?: number;
   ASSETS: Fetcher;
   /** Login password for the single owner of this app (Cloudflare secret). */
   APP_PASSWORD?: string;
@@ -13,5 +15,5 @@ export interface Env {
   TELEGRAM_BOT_TOKEN?: string;
 }
 
-export type AppEnv = { Bindings: Env; Variables: { sessionHash: string } };
+export type AppEnv = { Bindings: Env; Variables: { sessionHash: string; userId: number } };
 export type App = Hono<AppEnv>;
