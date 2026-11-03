@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { useLocation } from "react-router-dom";
+import { useLocation, useNavigate } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Copy, KeyRound, Smartphone, Send, CalendarDays, ShieldCheck, Database, Palette, Trash2, LogOut, CheckCircle2, UserRound, Coins } from "lucide-react";
+import { Copy, KeyRound, Smartphone, Send, CalendarDays, ShieldCheck, Database, Palette, Trash2, LogOut, CheckCircle2, UserRound, Coins, Sparkles, ChevronRight, ChevronLeft, Search } from "lucide-react";
 import type { Settings as SettingsT } from "@shared/types";
 import { del, get, patch, post } from "../lib/api";
 import { useBootstrap, useRefresh } from "../lib/data";
@@ -13,26 +13,124 @@ import { PinSection } from "../components/PinSection";
 import { AiCard } from "../components/AiCard";
 import { clearPin } from "../lib/pin";
 
+interface Group {
+  key: string;
+  title: string;
+  hint: string;
+  icon: ReactNode;
+  /** Card ids inside the group (old links such as /settings#rates still work). */
+  cards: string[];
+  /** Extra words the search box understands. */
+  words: string;
+}
+
+const GROUPS: Group[] = [
+  { key: "account", title: "Account & security", hint: "Your profile, two-step login, PIN, signed-in devices", icon: <ShieldCheck size={20} />, cards: ["account", "security"], words: "profile google password two-step 2fa authenticator pin devices logout sessions" },
+  { key: "connections", title: "Phone & Telegram", hint: "Send bank notifications here, Telegram alerts and quick add", icon: <Smartphone size={20} />, cards: ["phone", "telegram"], words: "phone sms notifications macrodroid shortcut connection key link telegram bot" },
+  { key: "ai", title: "AI assistant", hint: "Claude, ChatGPT or Gemini key, models and limits", icon: <Sparkles size={20} />, cards: ["ai"], words: "ai claude chatgpt openai gemini api key model limit tokens coach" },
+  { key: "money", title: "Budget month & currency", hint: "When your month starts, time zone, exchange rates", icon: <CalendarDays size={20} />, cards: ["period", "rates"], words: "budget month salary day time zone exchange rates currency usd eur atm cash" },
+  { key: "appearance", title: "Appearance", hint: "Theme and colours", icon: <Palette size={20} />, cards: ["appearance"], words: "theme dark light colour color sand forest rose midnight" },
+  { key: "data", title: "Your data", hint: "Download a copy, import, delete", icon: <Database size={20} />, cards: ["data"], words: "export backup csv json delete reset download" },
+];
+
+const groupOf = (id: string) => GROUPS.find((g) => g.key === id || g.cards.includes(id)) ?? null;
+
 export default function SettingsPage() {
   const boot = useBootstrap();
   const location = useLocation();
+  const navigate = useNavigate();
+  const [search, setSearch] = useState("");
+  const hash = location.hash.slice(1);
+  // "?google=linked" (coming back from Google) belongs to the Account group.
+  const current = groupOf(hash) ?? (location.search.includes("google=") ? GROUPS[0] : null);
+
+  // Scroll to a specific card when the link names one (e.g. /settings#rates), otherwise to the top.
   useEffect(() => {
-    if (location.hash) setTimeout(() => document.getElementById(location.hash.slice(1))?.scrollIntoView({ behavior: "smooth" }), 100);
-  }, [location.hash, boot.data]);
+    if (!boot.data) return;
+    const target = hash && !GROUPS.some((g) => g.key === hash) ? hash : null;
+    const t = setTimeout(() => (target ? document.getElementById(target)?.scrollIntoView({ behavior: "smooth" }) : window.scrollTo({ top: 0 })), 100);
+    return () => clearTimeout(t);
+  }, [hash, boot.data]);
+
   if (!boot.data) return <Spinner />;
   const s = boot.data.settings;
+  const q = search.trim().toLowerCase();
+  const shown = q ? GROUPS.filter((g) => `${g.title} ${g.hint} ${g.words}`.toLowerCase().includes(q)) : GROUPS;
+  const open = (key: string) => navigate({ pathname: "/settings", hash: key });
+
+  const panel = (g: Group) => (
+    <div className="[&>section:first-child]:mt-0">
+      {g.key === "account" && (
+        <>
+          <AccountCard />
+          <Security />
+        </>
+      )}
+      {g.key === "connections" && (
+        <>
+          <PhoneConnection origin={boot.data.origin} lastMessageAt={s.last_message_at} />
+          <TelegramSettings s={s} />
+        </>
+      )}
+      {g.key === "ai" && <AiSettings s={s} />}
+      {g.key === "money" && (
+        <>
+          <PeriodSettings s={s} />
+          <RatesCard />
+        </>
+      )}
+      {g.key === "appearance" && <Appearance />}
+      {g.key === "data" && <DataSection />}
+    </div>
+  );
+
+  const menu = (
+    <nav aria-label="Settings sections">
+      <label className="relative mb-3 block">
+        <Search size={16} className="pointer-events-none absolute left-3.5 top-1/2 -translate-y-1/2 text-ink-3" aria-hidden />
+        <input className="field pl-10" type="search" placeholder="Find a setting…" value={search} onChange={(e) => setSearch(e.target.value)} aria-label="Find a setting" />
+      </label>
+      <ul className="divide-y divide-line overflow-hidden rounded-2xl border border-line bg-surface">
+        {shown.map((g) => (
+          <li key={g.key}>
+            <button
+              onClick={() => open(g.key)}
+              aria-current={current?.key === g.key ? "page" : undefined}
+              className={clsx("flex w-full items-center gap-3 px-4 py-3.5 text-left hover:bg-surface-2", current?.key === g.key && "lg:bg-accent-soft")}
+            >
+              <span className="text-accent" aria-hidden>
+                {g.icon}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block font-medium">{g.title}</span>
+                <span className="block truncate text-[13px] text-ink-3">{g.hint}</span>
+              </span>
+              <ChevronRight size={18} className="shrink-0 text-ink-3 lg:hidden" aria-hidden />
+            </button>
+          </li>
+        ))}
+        {shown.length === 0 && <li className="px-4 py-6 text-center text-sm text-ink-3">Nothing matches “{search}”.</li>}
+      </ul>
+    </nav>
+  );
+
+  // Wide screens: menu on the left, the chosen section on the right (Account when nothing is chosen).
+  // Phones: the menu first; a tap opens the section with a back button.
+  const active = current ?? GROUPS[0];
   return (
-    <div className="max-w-3xl">
+    <div>
       <PageHeader title="Settings" />
-      <AccountCard />
-      <PhoneConnection origin={boot.data.origin} lastMessageAt={s.last_message_at} />
-      <AiSettings s={s} />
-      <TelegramSettings s={s} />
-      <PeriodSettings s={s} />
-      <RatesCard />
-      <Security />
-      <Appearance />
-      <DataSection />
+      <div className="mt-4 lg:grid lg:grid-cols-[17rem_minmax(0,1fr)] lg:items-start lg:gap-8">
+        <div className={clsx("lg:sticky lg:top-6", current && "hidden lg:block")}>{menu}</div>
+        <div className={clsx("min-w-0 max-w-3xl", !current && "hidden lg:block")}>
+          {current && (
+            <button onClick={() => navigate("/settings")} className="mb-3 flex items-center gap-1 text-sm font-medium text-accent lg:hidden">
+              <ChevronLeft size={18} aria-hidden /> Settings
+            </button>
+          )}
+          {panel(active)}
+        </div>
+      </div>
     </div>
   );
 }
@@ -468,7 +566,7 @@ function RatesCard() {
               <span>
                 1 {r.currency} <span className="text-ink-3">· {r.date ?? "no date"} · {SOURCE_LABEL[r.source] ?? r.source}</span>
               </span>
-              <span className="num font-medium">{r.rate.toFixed(4)} ₼</span>
+              <span className="num shrink-0 whitespace-nowrap font-medium">{r.rate.toFixed(4)} ₼</span>
             </li>
           ))}
         </ul>
