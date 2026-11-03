@@ -59,7 +59,7 @@ It runs for free on your own Cloudflare account and only you can open it.
   detection, select many transactions to recategorize / tag as transfers / hide / delete at once, CSV/JSON export,
   dark mode, installable on your phone.
 
-**Building the Android app?** Start with [docs/MOBILE-HANDOFF.md](docs/MOBILE-HANDOFF.md) (what exists, API contract, phased plan) and [docs/ANTIGRAVITY-PROMPT.md](docs/ANTIGRAVITY-PROMPT.md) (ready-made prompts).
+**Building the Android app?** See [docs/NATIVE-APP-PLAN.md](docs/NATIVE-APP-PLAN.md) (plan and milestones), [docs/NATIVE-APP-PROMPTS.md](docs/NATIVE-APP-PROMPTS.md) (prompts for Claude Code) and [docs/MOBILE-HANDOFF.md](docs/MOBILE-HANDOFF.md) (what exists and the server contract).
 
 ## Cost
 
