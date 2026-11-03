@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { ChevronLeft, ChevronRight, Wand2 } from "lucide-react";
-import type { BudgetStatus, Period } from "@shared/types";
+import type { BudgetStatus, Period, RangeBudgetStatus } from "@shared/types";
 import { daysBetween, formatMoney, localDate, parseAmount, shiftPeriod } from "@shared/money";
 import { del, get, post, put } from "../lib/api";
 import { useBootstrap, useCategories, useRefresh } from "../lib/data";
@@ -10,6 +10,7 @@ import { Button, Empty, ErrorNote, Label, Section, Sheet, Spinner, clsx, useToas
 import { PageHeader } from "../components/Layout";
 import { Meter } from "../components/charts";
 import { rollupSpending } from "../lib/spending";
+import { RangeBudgetsSection } from "../components/RangeBudgets";
 
 interface BudgetsData {
   period: Period;
@@ -17,6 +18,7 @@ interface BudgetsData {
   categories: BudgetStatus[];
   total_spent: number;
   average_last_3: Record<number, number>;
+  ranges: RangeBudgetStatus[];
 }
 
 export default function Budgets() {
@@ -177,6 +179,8 @@ export default function Budgets() {
           <p className="mt-2 px-1 text-[13px] text-ink-3">The small mark shows where you'd be today if you spent evenly through the month.</p>
         )}
       </Section>
+
+      <RangeBudgetsSection ranges={d.ranges ?? []} />
 
       {unbudgeted.length > 0 && (
         <Section title="Without a budget">

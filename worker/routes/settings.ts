@@ -121,7 +121,7 @@ app.get("/export/transactions.csv", async (c) => {
   });
 });
 
-const BACKUP_TABLES = ["accounts", "categories", "merchants", "rules", "transactions", "budgets", "insights", "raw_messages", "ai_usage"];
+const BACKUP_TABLES = ["accounts", "categories", "merchants", "rules", "transactions", "budgets", "range_budgets", "dashboards", "notes", "insights", "raw_messages", "ai_usage"];
 
 app.get("/export/backup.json", async (c) => {
   const data: Record<string, unknown[]> = {};

@@ -3,7 +3,7 @@
 
 import type { Rule, TxKind } from "./types";
 
-export type TextField = "merchant" | "description" | "message" | "any_text";
+export type TextField = "merchant" | "title" | "description" | "message" | "any_text";
 export type TextOp = "contains" | "not_contains" | "equals" | "starts_with" | "ends_with" | "regex";
 export type NumberOp = "eq" | "ne" | "gt" | "gte" | "lt" | "lte" | "between";
 export type ListField = "account" | "type" | "weekday" | "currency" | "category";
@@ -20,6 +20,7 @@ export interface RuleContext {
   merchant: string | null; // display name
   merchant_raw: string | null; // as written by the bank
   description: string | null;
+  title: string | null; // first line of the notification (its heading, e.g. "Ödəniş")
   message: string | null; // full bank notification text
   amount: number;
   currency: string;
@@ -117,6 +118,8 @@ export function conditionMatches(c: Condition, ctx: RuleContext): boolean {
       return c.op === "not_contains"
         ? textMatches(c.op, ctx.merchant, c.value) && textMatches(c.op, ctx.merchant_raw, c.value)
         : textMatches(c.op, ctx.merchant, c.value) || textMatches(c.op, ctx.merchant_raw, c.value);
+    case "title":
+      return textMatches(c.op, ctx.title, c.value);
     case "description":
       return textMatches(c.op, ctx.description, c.value);
     case "message":

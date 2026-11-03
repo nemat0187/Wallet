@@ -174,6 +174,34 @@ cards changes nothing in total, but the app can't know it was yours until you sa
   top to bottom (use the arrows to reorder) and can be switched off without deleting them. Shortcut: open any
   transaction → **Create a rule from this transaction**.
 - **Custom dates:** Activity → **Custom dates**, and Analytics → **Custom**.
+- **Customize Home:** on Home tap **Customize**. Every block (overview, things to check, where it went, latest,
+  cards, budgets, AI coach, top places, pinned dashboards) can be moved up/down, moved between the main column, the
+  side column and full width, or hidden. **Add widget** puts your own chart or number on Home; **Reset** brings the
+  original layout back. Changes save automatically and apply on every device.
+- **Notes** (More → Notes): free text with checklists (start a line with `- [ ]`, tap a box to tick it), pin the
+  important ones, pick a colour. Closing a note saves it.
+- **Themes:** Settings → Appearance. The choice is remembered on that device.
+
+## Budgets for a date range
+
+Budgets → **Date‑range budgets** → **Add**:
+
+- **Applies to:** all spending, or one category (with its subcategories).
+- **Days of every month:** e.g. from day 15 to day 30. If the last day is before the first (25 to 5) it runs into the
+  next month; short months end on their last day.
+- **Exact dates:** one time only, e.g. a holiday.
+- Running ones also show on Home. Telegram warns you once per round at your chosen percentage and when you go over.
+- Your normal monthly budgets are unchanged; both kinds can exist at the same time.
+
+## Correcting a payment
+
+Open a transaction → **Amount, date & time** → **Change**. You can change money in/out, the amount, the date and the
+time, and the card. Your card balance moves by the difference. Deleting a transaction adds its amount back to (or
+takes it off) the balance of that card.
+
+Rules didn't fire because the bank's notification looked different? Open the transaction and tap **Run my rules
+again** after fixing it. In a rule you can also match on **Notification heading** (the first line of the bank's
+notification).
 
 ---
 
@@ -205,6 +233,7 @@ an email code before the login page even loads:
 | Payments don't appear | **Settings → Phone connection** shows when the last message arrived. If “never”, the phone automation isn't running (check permissions, battery settings on Android, “Run Immediately” on iPhone). If messages arrive but aren't understood, they're listed under **Bank messages** — tap *Try again* after AI is enabled, or send a sample (with numbers changed) so the parser can be improved. |
 | A category is wrong | Open the transaction and pick the right one. Leave “Use for every … transaction” on — the app learns and fixes the others. |
 | Money moved between my own cards counts as spending | Confirm it: Home or Activity → **Review** → **Yes, my transfer**, or open it → Type → **Between my cards**. Only confirmed transfers are left out. |
+| Card balance is off after deleting or fixing a payment | Only payments that were part of the bank's last reported balance move it. For a fresh start, set the balance by hand on **Cards & accounts**; the next bank message corrects it anyway. |
 | A pair was never suggested (e.g. more than 30 minutes apart) | Select both in Activity (**Select**) → **Between my cards**. |
 | Error `exceeded resource limits` (rare, with huge imports) | Import a smaller file, or upgrade Cloudflare Workers to the $5/month plan. |
 

@@ -6,7 +6,7 @@ import type { Account, Settings, Transaction } from "@shared/types";
 import { addDays, daysBetween, localDate, periodFor, shiftPeriod } from "@shared/money";
 import { all, first } from "../lib/db";
 import { loadCategories, type CategoryIndex } from "./categorize";
-import { budgetStatus, rollUp, spendingByCategory } from "./budgets";
+import { budgetStatus, rangeBudgetStatuses, rollUp, spendingByCategory } from "./budgets";
 import { getSettings } from "./settings";
 import { sqlOffset } from "./ai";
 
@@ -66,7 +66,7 @@ export async function dashboard(env: Env, anchor?: string) {
   // Compare with the same number of days into the previous period.
   const prevSameEnd = addDays(prev.start, Math.min(elapsedDays, daysBetween(prev.start, prev.end) + 1) - 1);
 
-  const [cur, prevSame, prevFull, byCategory, daily, topMerchants, recent, accounts, budgets, counts, insight] = await Promise.all([
+  const [cur, prevSame, prevFull, byCategory, daily, topMerchants, recent, accounts, budgets, rangeBudgets, counts, insight] = await Promise.all([
     totals(db, period.start, period.end),
     totals(db, prev.start, prevSameEnd),
     totals(db, prev.start, prev.end),
@@ -93,6 +93,7 @@ export async function dashboard(env: Env, anchor?: string) {
     all<Transaction>(db, `${TX_SELECT} ORDER BY t.occurred_at DESC, t.id DESC LIMIT 8`),
     all<Account>(db, "SELECT * FROM accounts WHERE archived = 0 ORDER BY sort_order, id"),
     budgetStatus(db, idx, settings, period, now),
+    rangeBudgetStatuses(db, idx, now),
     first<{ review: number; failed: number; uncategorized: number }>(
       db,
       `SELECT (SELECT COUNT(*) FROM transactions WHERE needs_review = 1) AS review,
@@ -134,6 +135,7 @@ export async function dashboard(env: Env, anchor?: string) {
     recent,
     accounts,
     budgets,
+    range_budgets: rangeBudgets,
     counts: counts ?? { review: 0, failed: 0, uncategorized: 0 },
     insight: insightTeaser,
   };

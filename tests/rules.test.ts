@@ -6,6 +6,7 @@ const ctx: RuleContext = {
   merchant: "Ev Sahibi",
   merchant_raw: "Köçürmə: EV SAHİBİ",
   description: "Transfer sent",
+  title: "💸 Köçürmə: -650.00₼",
   message: "💸 Köçürmə: -650.00₼\nABB MOBILE\nKart: **4934\nBalans: 1,200.00₼",
   amount: -65000,
   currency: "AZN",
@@ -91,5 +92,13 @@ describe("rules", () => {
     expect(mergeTags("a, b", ["b", "c"])).toBe("a, b, c");
     expect(mergeTags(null, [])).toBeNull();
     expect(localParts("2026-10-24T18:30:00Z", 240)).toEqual({ weekday: 6, hour: 22 });
+  });
+});
+
+describe("notification title", () => {
+  it("matches the heading (first line) only", () => {
+    expect(conditionMatches({ field: "title", op: "contains", value: "köçürmə" }, ctx)).toBe(true);
+    expect(conditionMatches({ field: "title", op: "contains", value: "ABB MOBILE" }, ctx)).toBe(false);
+    expect(conditionMatches({ field: "title", op: "contains", value: "ödəniş" }, { ...ctx, title: null })).toBe(false);
   });
 });

@@ -1,7 +1,8 @@
 // Budget status: how much of each monthly budget is used, and where the
 // current pace of spending will land by the end of the period.
 
-import type { BudgetStatus, Settings } from "@shared/types";
+import type { BudgetStatus, RangeBudget, RangeBudgetStatus, Settings } from "@shared/types";
+import { daysUntilNextWindow, rangePeriod } from "@shared/budgets";
 import { daysBetween } from "@shared/money";
 import { all } from "../lib/db";
 import type { CategoryIndex } from "./categorize";
@@ -77,4 +78,42 @@ export async function budgetStatus(
     ? makeStatus(null, null, settings.overall_budget, total, 90, period, today)
     : null;
   return { overall, categories, total_spent: total };
+}
+
+/** Status of every budget that covers a calendar range (for the window containing `anchor`, see rangePeriod). */
+export async function rangeBudgetStatuses(db: D1Database, idx: CategoryIndex, anchor: string): Promise<RangeBudgetStatus[]> {
+  const budgets = await all<RangeBudget>(db, "SELECT id, name, category_id, amount, alert_pct, scope, start_day, end_day, start_date, end_date FROM range_budgets ORDER BY id");
+  const cache = new Map<string, Promise<{ rolled: Map<number, number>; total: number }>>();
+  const spendingFor = (start: string, end: string) => {
+    const key = `${start}|${end}`;
+    if (!cache.has(key)) {
+      cache.set(
+        key,
+        spendingByCategory(db, start, end).then((byCategory) => {
+          let total = 0;
+          for (const v of byCategory.values()) total += v;
+          return { rolled: rollUp(idx, byCategory), total };
+        }),
+      );
+    }
+    return cache.get(key)!;
+  };
+  const out: RangeBudgetStatus[] = [];
+  for (const b of budgets) {
+    if (b.category_id !== null && !idx.byId.has(b.category_id)) continue;
+    const period = rangePeriod(b, anchor);
+    const { rolled, total } = await spendingFor(period.start, period.end);
+    const spent = period.state === "upcoming" ? 0 : b.category_id === null ? total : (rolled.get(b.category_id) ?? 0);
+    const status = makeStatus(b.id, b.category_id, b.amount, spent, b.category_id === null ? Math.max(b.alert_pct, 10) : b.alert_pct, period, anchor);
+    out.push({
+      ...status,
+      range: b,
+      period: { start: period.start, end: period.end, label: period.label },
+      state: period.state,
+      starts_in_days: period.state === "active" ? null : daysUntilNextWindow(b, anchor),
+    });
+  }
+  // Running ones first, then upcoming, then finished.
+  const rank = { active: 0, upcoming: 1, ended: 2 } as const;
+  return out.sort((a, b) => rank[a.state] - rank[b.state] || b.pct - a.pct);
 }

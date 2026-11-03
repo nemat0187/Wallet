@@ -1,7 +1,8 @@
 @import "tailwindcss";
 @import "@fontsource-variable/onest";
 
-/* Theme follows the phone/computer setting; Settings can force light or dark via data-theme on <html>. */
+/* The theme follows the phone/computer setting unless Settings picks one: data-theme on <html> is light, dark,
+   sand, forest, rose or midnight. Every theme defines every variable below. */
 @custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
 
 :root {
@@ -46,7 +47,7 @@
 }
 
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
+  :root:not([data-theme]) {
     color-scheme: dark;
     --paper: #0f1819;
     --surface: #152224;
@@ -119,6 +120,156 @@
   --cat-5: #d55181;
   --cat-6: #008300;
   --shadow: 0 1px 2px rgb(0 0 0 / 30%), 0 8px 24px rgb(0 0 0 / 25%);
+}
+
+/* --- Extra themes (colours checked for text contrast and, for charts, with the dataviz validator) --- */
+
+:root[data-theme="sand"] {
+  color-scheme: light;
+  --paper: #f4efe6;
+  --surface: #fffdf9;
+  --surface-2: #ece5d8;
+  --line: #ddd3c1;
+  --ink: #2b2418;
+  --ink-2: #5c5242;
+  --ink-3: #766b58;
+  --accent: #9a4a14;
+  --accent-hover: #7d3b0f;
+  --accent-ink: #ffffff;
+  --accent-soft: #f6e4d2;
+  --good: #2f6f3e;
+  --good-soft: #e0efdf;
+  --warn: #9a5a0c;
+  --warn-soft: #f8e8c8;
+  --bad: #b3303f;
+  --bad-soft: #f6dcdd;
+  --series-1: #c0621e;
+  --series-2: #2a78d6;
+  --series-1-track: #f1dfcb;
+  --seq-1: #f6e8d8;
+  --seq-2: #efd0ae;
+  --seq-3: #e3b07c;
+  --seq-4: #d28a4c;
+  --seq-5: #b8662b;
+  --seq-6: #8a4719;
+  --cat-1: #2a78d6;
+  --cat-2: #eb6834;
+  --cat-3: #1baf7a;
+  --cat-4: #eda100;
+  --cat-5: #e87ba4;
+  --cat-6: #008300;
+  --shadow: 0 1px 2px rgb(60 40 10 / 8%), 0 8px 24px rgb(60 40 10 / 8%);
+}
+
+:root[data-theme="forest"] {
+  color-scheme: light;
+  --paper: #eff5ef;
+  --surface: #fcfffc;
+  --surface-2: #e1ebe1;
+  --line: #cddacd;
+  --ink: #15291a;
+  --ink-2: #455e4a;
+  --ink-3: #576f5c;
+  --accent: #2d7a3f;
+  --accent-hover: #236232;
+  --accent-ink: #ffffff;
+  --accent-soft: #d8efdc;
+  --good: #1f7a50;
+  --good-soft: #d9f0e4;
+  --warn: #a8660f;
+  --warn-soft: #fbecd2;
+  --bad: #b8304a;
+  --bad-soft: #f8dde2;
+  --series-1: #2f8f50;
+  --series-2: #2a78d6;
+  --series-1-track: #d3ecd8;
+  --seq-1: #e3f3e6;
+  --seq-2: #bfe3c6;
+  --seq-3: #8ccd99;
+  --seq-4: #55b06c;
+  --seq-5: #2f8a49;
+  --seq-6: #1d5f31;
+  --cat-1: #2a78d6;
+  --cat-2: #eb6834;
+  --cat-3: #1baf7a;
+  --cat-4: #eda100;
+  --cat-5: #e87ba4;
+  --cat-6: #008300;
+  --shadow: 0 1px 2px rgb(20 50 25 / 7%), 0 8px 24px rgb(20 50 25 / 7%);
+}
+
+:root[data-theme="rose"] {
+  color-scheme: light;
+  --paper: #f8f1f2;
+  --surface: #fffdfd;
+  --surface-2: #f0e3e5;
+  --line: #e6d3d6;
+  --ink: #2a1a1e;
+  --ink-2: #5f4a50;
+  --ink-3: #7b616a;
+  --accent: #b0285a;
+  --accent-hover: #8f1f48;
+  --accent-ink: #ffffff;
+  --accent-soft: #f9dde7;
+  --good: #1f7a50;
+  --good-soft: #dcf1e6;
+  --warn: #a8660f;
+  --warn-soft: #fbecd2;
+  --bad: #b8362a;
+  --bad-soft: #f8dfdb;
+  --series-1: #c43d72;
+  --series-2: #2a78d6;
+  --series-1-track: #f6d9e4;
+  --seq-1: #fbe6ee;
+  --seq-2: #f4c3d6;
+  --seq-3: #e996b5;
+  --seq-4: #d96492;
+  --seq-5: #bb3a6c;
+  --seq-6: #8a2551;
+  --cat-1: #2a78d6;
+  --cat-2: #eb6834;
+  --cat-3: #1baf7a;
+  --cat-4: #eda100;
+  --cat-5: #e87ba4;
+  --cat-6: #008300;
+  --shadow: 0 1px 2px rgb(60 20 30 / 7%), 0 8px 24px rgb(60 20 30 / 7%);
+}
+
+:root[data-theme="midnight"] {
+  color-scheme: dark;
+  --paper: #0b1020;
+  --surface: #131a2e;
+  --surface-2: #1b2440;
+  --line: #2a3558;
+  --ink: #e6ebf8;
+  --ink-2: #aab4d0;
+  --ink-3: #8590b0;
+  --accent: #6ea8ff;
+  --accent-hover: #8dbcff;
+  --accent-ink: #07142b;
+  --accent-soft: #1a2c52;
+  --good: #4cc08a;
+  --good-soft: #14322a;
+  --warn: #e2aa4f;
+  --warn-soft: #38290f;
+  --bad: #f07185;
+  --bad-soft: #3d1c27;
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-1-track: #1c2a4a;
+  --seq-1: #17233f;
+  --seq-2: #1a3566;
+  --seq-3: #1f4d99;
+  --seq-4: #3a74d0;
+  --seq-5: #6ea0f0;
+  --seq-6: #b3d0ff;
+  --cat-1: #3987e5;
+  --cat-2: #d95926;
+  --cat-3: #199e70;
+  --cat-4: #c98500;
+  --cat-5: #d55181;
+  --cat-6: #008300;
+  --shadow: 0 1px 2px rgb(0 0 0 / 35%), 0 8px 24px rgb(0 0 0 / 30%);
 }
 
 @theme inline {

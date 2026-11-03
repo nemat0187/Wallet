@@ -1,16 +1,18 @@
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Sparkles, AlertCircle, Smartphone, ArrowRight } from "lucide-react";
-import type { Account, BudgetStatus, Transaction } from "@shared/types";
+import { ChevronLeft, ChevronRight, Sparkles, AlertCircle, Smartphone, ArrowRight, LayoutGrid } from "lucide-react";
+import type { Account, BudgetStatus, RangeBudgetStatus, Transaction } from "@shared/types";
 import { addDays, daysBetween, formatMoney, localDate, shiftPeriod } from "@shared/money";
 import { get } from "../lib/api";
 import { useBootstrap, useCategories } from "../lib/data";
 import { Empty, Money, Section, Spinner, clsx } from "../lib/ui";
 import { BarList, Meter, PaceChart } from "../components/charts";
 import { TxEditor, TxList } from "../components/Transactions";
-import { HomeDashboards } from "../components/HomeDashboards";
-import { TransferPairsBanner } from "../components/Transfers";
+import { HomeGrid } from "../components/HomeLayout";
+import { RangeBudgetRow } from "../components/RangeBudgets";
+import { TransferPairsBanner, useTransferPairs } from "../components/Transfers";
+import type { HomeBlockId } from "@shared/home";
 
 interface DashboardData {
   period: { start: string; end: string; label: string; is_current: boolean; elapsed_days: number; total_days: number };
@@ -24,6 +26,7 @@ interface DashboardData {
   top_merchants: { merchant_id: number; name: string; spent: number; count: number; category_id: number | null }[];
   recent: Transaction[];
   accounts: Account[];
+  range_budgets: RangeBudgetStatus[];
   budgets: { overall: BudgetStatus | null; categories: BudgetStatus[]; total_spent: number };
   counts: { review: number; failed: number; uncategorized: number };
   insight: { id: number; title: string; headline: string; created_at: string; tips: { title: string; potential_monthly_savings: number | null }[] } | null;
@@ -40,6 +43,8 @@ export default function Dashboard() {
     placeholderData: (prev) => prev,
   });
   const [open, setOpen] = useState<Transaction | null>(null);
+  const [customizing, setCustomizing] = useState(false);
+  const pairCount = useTransferPairs().data?.length ?? 0;
   const navigate = useNavigate();
   const cats = useCategories();
   const d = q.data;
@@ -60,6 +65,232 @@ export default function Dashboard() {
   const deltaPct = d.prev_same_point.spent > 0 ? Math.round(((d.totals.spent - d.prev_same_point.spent) / d.prev_same_point.spent) * 100) : null;
   const remainingDays = d.period.is_current ? daysBetween(today, d.period.end) + 1 : 0;
   const noData = (boot.data?.counts.transactions ?? 0) === 0;
+  const counted = d.accounts.filter((a) => a.include_in_totals && a.currency === "AZN" && a.balance !== null);
+  const totalBalance = counted.length > 1 ? counted.reduce((sum, a) => sum + (a.balance ?? 0), 0) : null;
+
+  const blocks: Record<HomeBlockId, React.ReactNode> = {
+    hero: (
+
+      <section className="rounded-3xl border border-line bg-surface px-5 pb-4 pt-5 sm:px-7">
+        {overall ? (
+          <>
+            <p className="text-ink-2">{overall.remaining >= 0 ? "Left to spend" : "Over budget by"}</p>
+            <p className={clsx("mt-1 text-[52px] font-semibold leading-none tracking-tight", overall.remaining < 0 && "text-bad")}>
+              {formatMoney(Math.abs(overall.remaining), "AZN", { decimals: Math.abs(overall.remaining) < 100000 })}
+            </p>
+            <p className="mt-3 text-[15px] text-ink-2">
+              {d.period.is_current ? (
+                overall.remaining > 0 && d.safe_to_spend_per_day !== null ? (
+                  <>
+                    That's <strong className="font-semibold text-ink num">{formatMoney(d.safe_to_spend_per_day)}</strong> a day for the next{" "}
+                    {remainingDays} {remainingDays === 1 ? "day" : "days"}.
+                  </>
+                ) : (
+                  <>Try to keep the rest of {d.period.label} to essentials.</>
+                )
+              ) : (
+                <>
+                  You spent <span className="num">{formatMoney(overall.spent)}</span> of <span className="num">{formatMoney(overall.amount)}</span>.
+                </>
+              )}
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="text-ink-2">Spent {d.period.is_current ? "so far" : ""} in {d.period.label}</p>
+            <p className="mt-1 text-[52px] font-semibold leading-none tracking-tight">
+              {formatMoney(d.totals.spent, "AZN", { decimals: d.totals.spent < 100000 })}
+            </p>
+            <p className="mt-3 text-[15px] text-ink-2">
+              <Link to="/budgets" className="font-medium text-accent">
+                Set a monthly budget
+              </Link>{" "}
+              to see how much you can still spend each day.
+            </p>
+          </>
+        )}
+        <div className="mt-5">
+          <PaceChart days={days} today={today} dailyBudget={overall ? Math.round(overall.amount / d.period.total_days) : null} />
+        </div>
+        <dl className="mt-3 grid grid-cols-3 gap-3 border-t border-line pt-4 text-sm">
+          <Stat label="Spent" value={<Money value={d.totals.spent} />} />
+          <Stat label="Income" value={<Money value={d.totals.income} />} />
+          <Stat
+            label={d.period.is_current ? "vs last month" : "vs month before"}
+            value={
+              deltaPct === null ? (
+                "—"
+              ) : (
+                <span className={clsx(deltaPct > 5 ? "text-bad" : deltaPct < -5 ? "text-good" : "")}>
+                  {deltaPct > 0 ? "+" : ""}
+                  {deltaPct}%
+                </span>
+              )
+            }
+          />
+        </dl>
+      </section>
+    ),
+    attention: (d.counts.review > 0 || d.counts.failed > 0 || pairCount > 0) ? (
+    <div className="flex flex-col gap-2">
+      <Attention review={d.counts.review} failed={d.counts.failed} />
+      <TransferPairsBanner />
+    </div>
+  ) : null,
+    where: (
+      <Section
+        className="mt-0"
+        title="Where it went"
+        action={
+          <Link to="/analytics" className="text-sm font-medium text-accent">
+            Analytics
+          </Link>
+        }
+      >
+        {d.categories.length ? (
+          <div className="rounded-2xl border border-line bg-surface p-2">
+            <BarList
+              total={d.totals.spent}
+              rows={d.categories.slice(0, 8).map((c) => ({
+                key: c.category_id,
+                icon: cats.info(c.category_id)?.icon,
+                label: cats.info(c.category_id)?.name ?? "Uncategorized",
+                value: c.spent,
+                sub: c.children
+                  .slice(0, 3)
+                  .map((x) => `${cats.info(x.category_id)?.name} ${formatMoney(x.spent, "AZN", { decimals: false })}`)
+                  .join(" · "),
+              }))}
+              onSelect={(id) => navigate(`/activity?category=${id}&from=${d.period.start}&to=${d.period.end}`)}
+            />
+          </div>
+        ) : (
+          <Empty title="No spending yet this period" />
+        )}
+      </Section>
+    ),
+    latest: (
+      <Section
+        className="mt-0"
+        title="Latest"
+        action={
+          <Link to="/activity" className="text-sm font-medium text-accent">
+            See all
+          </Link>
+        }
+      >
+        {d.recent.length ? (
+          <TxList items={d.recent} onOpen={setOpen} tz={settings.tz_offset_minutes} />
+        ) : (
+          <Empty title="Nothing here yet">Transactions appear here as soon as your phone forwards a bank message, or when you add one with +.</Empty>
+        )}
+      </Section>
+    ),
+    cards: (
+      <Section
+        title="Cards"
+        className="mt-0"
+        action={
+          totalBalance !== null ? (
+            <span className="text-sm text-ink-2">
+              Total <span className="num font-semibold text-ink">{formatMoney(totalBalance)}</span>
+            </span>
+          ) : undefined
+        }
+      >
+        <div className="scroll-x -mx-4 flex gap-3 overflow-x-auto px-4 pb-1 lg:mx-0 lg:flex-col lg:px-0">
+          {d.accounts.map((a) => (
+            <Link
+              to="/accounts"
+              key={a.id}
+              className="min-w-44 shrink-0 rounded-2xl border border-line bg-surface px-4 py-3 hover:bg-surface-2 lg:min-w-0"
+            >
+              <span className="flex items-center gap-2 text-sm text-ink-2">
+                <span className="h-2.5 w-2.5 rounded-full" style={{ background: a.color ?? "var(--accent)" }} />
+                {a.name}
+              </span>
+              <span className="mt-1 block text-lg font-semibold num">{a.balance !== null ? formatMoney(a.balance, a.currency) : "—"}</span>
+              {a.balance_at && <span className="block text-[12px] text-ink-3">as of {a.balance_at.slice(0, 10)}</span>}
+            </Link>
+          ))}
+        </div>
+      </Section>
+    ),
+    budgets: (
+      <Section
+        className="mt-0"
+        title="Budgets"
+        action={
+          <Link to="/budgets" className="text-sm font-medium text-accent">
+            Manage
+          </Link>
+        }
+      >
+        {d.budgets.categories.length ? (
+          <ul className="flex flex-col gap-4 rounded-2xl border border-line bg-surface p-4">
+            {d.budgets.categories.slice(0, 5).map((b) => (
+              <li key={b.category_id}>
+                <div className="mb-1.5 flex items-baseline justify-between gap-2 text-sm">
+                  <span className="truncate">
+                    {cats.info(b.category_id)?.icon} {cats.info(b.category_id)?.name}
+                  </span>
+                  <span className="num shrink-0 text-ink-2">
+                    <span className={clsx("font-medium", b.status === "over" ? "text-bad" : "text-ink")}>{formatMoney(b.spent, "AZN", { decimals: false })}</span>
+                    {" / "}
+                    {formatMoney(b.amount, "AZN", { decimals: false })}
+                  </span>
+                </div>
+                <Meter
+                  spent={b.spent}
+                  amount={b.amount}
+                  status={b.status}
+                  paceFraction={d.period.is_current ? d.period.elapsed_days / d.period.total_days : null}
+                />
+              </li>
+            ))}
+          </ul>
+        ) : d.range_budgets.length === 0 ? (
+          <Empty title="No category budgets" action={<Link to="/budgets" className="font-medium text-accent">Create budgets</Link>}>
+            Budgets show how each category is doing during the month.
+          </Empty>
+        ) : null}
+        {d.range_budgets.some((b) => b.state === "active") && (
+          <ul className={clsx("flex flex-col divide-y divide-line rounded-2xl border border-line bg-surface", d.budgets.categories.length > 0 && "mt-3")}>
+            {d.range_budgets
+              .filter((b) => b.state === "active")
+              .map((b) => (
+                <li key={b.range.id}>
+                  <RangeBudgetRow b={b} />
+                </li>
+              ))}
+          </ul>
+        )}
+      </Section>
+    ),
+    coach: (
+      <Section title="AI coach" className="mt-0">
+        <InsightTeaser insight={d.insight} />
+      </Section>
+    ),
+    places: d.top_merchants.length > 0 ? (
+        <Section title="Top places" className="mt-0">
+          <ol className="divide-y divide-line rounded-2xl border border-line bg-surface">
+            {d.top_merchants.map((m) => (
+              <li key={m.merchant_id}>
+                <Link to={`/activity?merchant=${m.merchant_id}`} className="flex items-center gap-3 px-4 py-2.5 hover:bg-surface-2">
+                  <span className="w-6 text-center" aria-hidden>
+                    {cats.info(m.category_id)?.icon ?? "🏷️"}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">{m.name}</span>
+                  <span className="text-[13px] text-ink-3">{m.count}×</span>
+                  <span className="num font-medium">{formatMoney(m.spent, "AZN", { decimals: false })}</span>
+                </Link>
+              </li>
+            ))}
+          </ol>
+        </Section>
+    ) : null,
+  };
 
   return (
     <div className={clsx("transition-opacity", q.isFetching && q.isPlaceholderData && "opacity-60")}>
@@ -79,210 +310,23 @@ export default function Dashboard() {
             <ChevronRight size={20} />
           </button>
         </div>
-        {!d.period.is_current && (
-          <button onClick={() => setAnchor(today)} className="text-sm font-medium text-accent">
-            Back to now
-          </button>
-        )}
+        <div className="flex items-center gap-3">
+          {!d.period.is_current && (
+            <button onClick={() => setAnchor(today)} className="text-sm font-medium text-accent">
+              Back to now
+            </button>
+          )}
+          {!customizing && (
+            <button onClick={() => setCustomizing(true)} className="flex items-center gap-1.5 rounded-full px-2.5 py-1.5 text-sm font-medium text-ink-2 hover:bg-surface-2 hover:text-ink">
+              <LayoutGrid size={16} aria-hidden /> Customize
+            </button>
+          )}
+        </div>
       </div>
 
       {noData && <ConnectPrompt />}
 
-      <div className="mt-2 grid gap-x-10 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <div className="min-w-0">
-          {/* Hero: what's left (or what's spent when there's no budget) */}
-          <section className="rounded-3xl border border-line bg-surface px-5 pb-4 pt-5 sm:px-7">
-            {overall ? (
-              <>
-                <p className="text-ink-2">{overall.remaining >= 0 ? "Left to spend" : "Over budget by"}</p>
-                <p className={clsx("mt-1 text-[52px] font-semibold leading-none tracking-tight", overall.remaining < 0 && "text-bad")}>
-                  {formatMoney(Math.abs(overall.remaining), "AZN", { decimals: Math.abs(overall.remaining) < 100000 })}
-                </p>
-                <p className="mt-3 text-[15px] text-ink-2">
-                  {d.period.is_current ? (
-                    overall.remaining > 0 && d.safe_to_spend_per_day !== null ? (
-                      <>
-                        That's <strong className="font-semibold text-ink num">{formatMoney(d.safe_to_spend_per_day)}</strong> a day for the next{" "}
-                        {remainingDays} {remainingDays === 1 ? "day" : "days"}.
-                      </>
-                    ) : (
-                      <>Try to keep the rest of {d.period.label} to essentials.</>
-                    )
-                  ) : (
-                    <>
-                      You spent <span className="num">{formatMoney(overall.spent)}</span> of <span className="num">{formatMoney(overall.amount)}</span>.
-                    </>
-                  )}
-                </p>
-              </>
-            ) : (
-              <>
-                <p className="text-ink-2">Spent {d.period.is_current ? "so far" : ""} in {d.period.label}</p>
-                <p className="mt-1 text-[52px] font-semibold leading-none tracking-tight">
-                  {formatMoney(d.totals.spent, "AZN", { decimals: d.totals.spent < 100000 })}
-                </p>
-                <p className="mt-3 text-[15px] text-ink-2">
-                  <Link to="/budgets" className="font-medium text-accent">
-                    Set a monthly budget
-                  </Link>{" "}
-                  to see how much you can still spend each day.
-                </p>
-              </>
-            )}
-            <div className="mt-5">
-              <PaceChart days={days} today={today} dailyBudget={overall ? Math.round(overall.amount / d.period.total_days) : null} />
-            </div>
-            <dl className="mt-3 grid grid-cols-3 gap-3 border-t border-line pt-4 text-sm">
-              <Stat label="Spent" value={<Money value={d.totals.spent} />} />
-              <Stat label="Income" value={<Money value={d.totals.income} />} />
-              <Stat
-                label={d.period.is_current ? "vs last month" : "vs month before"}
-                value={
-                  deltaPct === null ? (
-                    "—"
-                  ) : (
-                    <span className={clsx(deltaPct > 5 ? "text-bad" : deltaPct < -5 ? "text-good" : "")}>
-                      {deltaPct > 0 ? "+" : ""}
-                      {deltaPct}%
-                    </span>
-                  )
-                }
-              />
-            </dl>
-          </section>
-
-          <Attention review={d.counts.review} failed={d.counts.failed} />
-          <TransferPairsBanner className="mt-2" />
-
-          <Section
-            title="Where it went"
-            action={
-              <Link to="/analytics" className="text-sm font-medium text-accent">
-                Analytics
-              </Link>
-            }
-          >
-            {d.categories.length ? (
-              <div className="rounded-2xl border border-line bg-surface p-2">
-                <BarList
-                  total={d.totals.spent}
-                  rows={d.categories.slice(0, 8).map((c) => ({
-                    key: c.category_id,
-                    icon: cats.info(c.category_id)?.icon,
-                    label: cats.info(c.category_id)?.name ?? "Uncategorized",
-                    value: c.spent,
-                    sub: c.children
-                      .slice(0, 3)
-                      .map((x) => `${cats.info(x.category_id)?.name} ${formatMoney(x.spent, "AZN", { decimals: false })}`)
-                      .join(" · "),
-                  }))}
-                  onSelect={(id) => navigate(`/activity?category=${id}&from=${d.period.start}&to=${d.period.end}`)}
-                />
-              </div>
-            ) : (
-              <Empty title="No spending yet this period" />
-            )}
-          </Section>
-
-          <Section
-            title="Latest"
-            action={
-              <Link to="/activity" className="text-sm font-medium text-accent">
-                See all
-              </Link>
-            }
-          >
-            {d.recent.length ? (
-              <TxList items={d.recent} onOpen={setOpen} tz={settings.tz_offset_minutes} />
-            ) : (
-              <Empty title="Nothing here yet">Transactions appear here as soon as your phone forwards a bank message, or when you add one with +.</Empty>
-            )}
-          </Section>
-        </div>
-
-        <aside className="min-w-0">
-          <Section title="Cards" className="lg:mt-0">
-            <div className="scroll-x -mx-4 flex gap-3 overflow-x-auto px-4 pb-1 lg:mx-0 lg:flex-col lg:px-0">
-              {d.accounts.map((a) => (
-                <Link
-                  to="/accounts"
-                  key={a.id}
-                  className="min-w-44 shrink-0 rounded-2xl border border-line bg-surface px-4 py-3 hover:bg-surface-2 lg:min-w-0"
-                >
-                  <span className="flex items-center gap-2 text-sm text-ink-2">
-                    <span className="h-2.5 w-2.5 rounded-full" style={{ background: a.color ?? "var(--accent)" }} />
-                    {a.name}
-                  </span>
-                  <span className="mt-1 block text-lg font-semibold num">{a.balance !== null ? formatMoney(a.balance, a.currency) : "—"}</span>
-                  {a.balance_at && <span className="block text-[12px] text-ink-3">as of {a.balance_at.slice(0, 10)}</span>}
-                </Link>
-              ))}
-            </div>
-          </Section>
-
-          <Section
-            title="Budgets"
-            action={
-              <Link to="/budgets" className="text-sm font-medium text-accent">
-                Manage
-              </Link>
-            }
-          >
-            {d.budgets.categories.length ? (
-              <ul className="flex flex-col gap-4 rounded-2xl border border-line bg-surface p-4">
-                {d.budgets.categories.slice(0, 5).map((b) => (
-                  <li key={b.category_id}>
-                    <div className="mb-1.5 flex items-baseline justify-between gap-2 text-sm">
-                      <span className="truncate">
-                        {cats.info(b.category_id)?.icon} {cats.info(b.category_id)?.name}
-                      </span>
-                      <span className="num shrink-0 text-ink-2">
-                        <span className={clsx("font-medium", b.status === "over" ? "text-bad" : "text-ink")}>{formatMoney(b.spent, "AZN", { decimals: false })}</span>
-                        {" / "}
-                        {formatMoney(b.amount, "AZN", { decimals: false })}
-                      </span>
-                    </div>
-                    <Meter
-                      spent={b.spent}
-                      amount={b.amount}
-                      status={b.status}
-                      paceFraction={d.period.is_current ? d.period.elapsed_days / d.period.total_days : null}
-                    />
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <Empty title="No category budgets" action={<Link to="/budgets" className="font-medium text-accent">Create budgets</Link>}>
-                Budgets show how each category is doing during the month.
-              </Empty>
-            )}
-          </Section>
-
-          <Section title="AI coach">
-            <InsightTeaser insight={d.insight} />
-          </Section>
-
-          {d.top_merchants.length > 0 && (
-            <Section title="Top places">
-              <ol className="divide-y divide-line rounded-2xl border border-line bg-surface">
-                {d.top_merchants.map((m) => (
-                  <li key={m.merchant_id}>
-                    <Link to={`/activity?merchant=${m.merchant_id}`} className="flex items-center gap-3 px-4 py-2.5 hover:bg-surface-2">
-                      <span className="w-6 text-center" aria-hidden>
-                        {cats.info(m.category_id)?.icon ?? "🏷️"}
-                      </span>
-                      <span className="min-w-0 flex-1 truncate">{m.name}</span>
-                      <span className="text-[13px] text-ink-3">{m.count}×</span>
-                      <span className="num font-medium">{formatMoney(m.spent, "AZN", { decimals: false })}</span>
-                    </Link>
-                  </li>
-                ))}
-              </ol>
-            </Section>
-          )}
-        </aside>
-      </div>
-      <HomeDashboards today={today} monthStartDay={startDay} />
+      <HomeGrid blocks={blocks} today={today} monthStartDay={startDay} editing={customizing} onDone={() => setCustomizing(false)} />
       <TxEditor tx={open} onClose={() => setOpen(null)} />
     </div>
   );

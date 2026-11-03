@@ -116,6 +116,27 @@ export interface BudgetStatus {
   status: "ok" | "warning" | "over";
 }
 
+/** A budget for a calendar range (see shared/budgets.ts). */
+export interface RangeBudget {
+  id: number;
+  name: string | null;
+  category_id: number | null; // null = all spending
+  amount: number;
+  alert_pct: number;
+  scope: "days" | "dates";
+  start_day: number | null;
+  end_day: number | null;
+  start_date: string | null;
+  end_date: string | null;
+}
+
+export interface RangeBudgetStatus extends BudgetStatus {
+  range: RangeBudget;
+  period: { start: string; end: string; label: string };
+  state: "upcoming" | "active" | "ended";
+  starts_in_days: number | null;
+}
+
 export interface Period {
   start: string; // YYYY-MM-DD inclusive
   end: string; // YYYY-MM-DD inclusive
@@ -192,6 +213,7 @@ export interface Settings {
   notify_budget_alerts: boolean;
   notify_reports: boolean;
   atm_as_transfer: boolean;
+  home_layout: import("./home").HomeItem[] | null;
   totp_enabled: boolean;
   last_message_at: string | null;
 }

@@ -98,6 +98,7 @@ export async function createTransaction(env: Env, tx: NewTransaction, ctx: Creat
       merchant: merchantName,
       merchant_raw: merchantText,
       description: tx.description ?? null,
+      title: tx.message ? (tx.message.split("\n").find((l) => l.trim()) ?? null) : null,
       message: tx.message ?? null,
       amount: tx.amount,
       currency: tx.orig_currency ?? tx.currency,
@@ -182,6 +183,76 @@ export async function createTransaction(env: Env, tx: NewTransaction, ctx: Creat
   }
 
   return { id, duplicate: false, needs_ai: needsAi };
+}
+
+// ---------------------------------------------------------------------------
+// Card balances. accounts.balance is a snapshot taken from the bank message's
+// "Balans" (or a running sum for the cash wallet). A transaction is "counted" in
+// it when that snapshot already includes the payment; deleting or changing such a
+// transaction must therefore move the balance by the same amount.
+
+export interface BalanceRow {
+  account_id: number | null;
+  amount: number;
+  amount_base: number;
+  currency: string;
+  balance_after: number | null;
+  occurred_at: string;
+  source: string;
+}
+export interface BalanceAccount {
+  id: number;
+  type: string;
+  currency: string;
+  balance: number | null;
+  balance_at: string | null;
+}
+
+/** The part of a transaction that is inside its account's balance (in the account's currency), else 0. */
+export function balanceEffect(row: BalanceRow, account: Pick<BalanceAccount, "type" | "currency" | "balance_at"> | undefined): number {
+  if (!account) return 0;
+  const counted =
+    row.balance_after !== null
+      ? account.balance_at !== null && row.occurred_at <= account.balance_at
+      : row.source === "manual" && account.type === "cash";
+  if (!counted) return 0;
+  if (row.currency === account.currency) return row.amount;
+  return account.currency === "AZN" ? row.amount_base : 0;
+}
+
+export async function loadBalanceAccounts(db: D1Database, ids: number[]): Promise<Map<number, BalanceAccount>> {
+  const unique = [...new Set(ids)];
+  if (!unique.length) return new Map();
+  const rows = await all<BalanceAccount>(db, `SELECT id, type, currency, balance, balance_at FROM accounts WHERE id IN (${placeholders(unique.length)})`, ...unique);
+  return new Map(rows.map((a) => [a.id, a]));
+}
+
+/** Statements that move account balances by the given deltas (only accounts that have a balance). */
+export function balanceStatements(db: D1Database, deltas: Map<number, number>): D1PreparedStatement[] {
+  return [...deltas].filter(([, d]) => d !== 0).map(([id, d]) => db.prepare("UPDATE accounts SET balance = balance + ? WHERE id = ? AND balance IS NOT NULL").bind(d, id));
+}
+
+/** Delete transactions and undo their effect on card balances. */
+export async function deleteTransactions(db: D1Database, ids: number[]): Promise<void> {
+  if (!ids.length) return;
+  const ph = placeholders(ids.length);
+  const rows = await all<BalanceRow & { id: number }>(
+    db,
+    `SELECT id, account_id, amount, amount_base, currency, balance_after, occurred_at, source FROM transactions WHERE id IN (${ph})`,
+    ...ids,
+  );
+  const accounts = await loadBalanceAccounts(db, rows.map((r) => r.account_id).filter((x): x is number => x !== null));
+  const deltas = new Map<number, number>();
+  for (const r of rows) {
+    if (r.account_id === null) continue;
+    deltas.set(r.account_id, (deltas.get(r.account_id) ?? 0) - balanceEffect(r, accounts.get(r.account_id)));
+  }
+  await db.batch([
+    db.prepare(`UPDATE transactions SET pair_id = NULL WHERE pair_id IN (${ph})`).bind(...ids),
+    db.prepare(`UPDATE raw_messages SET transaction_id = NULL, status = 'ignored' WHERE transaction_id IN (${ph})`).bind(...ids),
+    db.prepare(`DELETE FROM transactions WHERE id IN (${ph})`).bind(...ids),
+    ...balanceStatements(db, deltas),
+  ]);
 }
 
 /**

@@ -28,7 +28,9 @@ It runs for free on your own Cloudflare account and only you can open it.
   A rule can set the category or type (incl. “between my cards”), rename the merchant, add tags or a note, or leave
   the transaction out of statistics. A live preview shows which of your past transactions it would catch.
 - **Budgets.** Monthly total and per‑category limits, a budget month that can start on salary day, “left to spend
-  per day”, pace markers and end‑of‑month projections. Telegram warnings at 80% / 100%.
+  per day”, pace markers and end‑of‑month projections. Telegram warnings at 80% / 100%. **Date‑range budgets** for
+  all spending or one category: the same days every month (e.g. the 15th to the 30th) or exact dates (a trip, a
+  holiday).
 - **Analytics.** Month‑by‑month income vs spending, category trends, top merchants, a weekday × time heatmap,
   detected subscriptions and regular bills, unusually large payments, any date range you choose.
 - **Your own dashboards.** Build dashboards from widgets: pick what to measure (spending, income, savings, number of
@@ -39,6 +41,12 @@ It runs for free on your own Cloudflare account and only you can open it.
 - **AI coach (Claude).** Weekly and monthly reports with a health score, bad habits with their monthly cost,
   concrete recommendations and suggested budgets. Ask questions in plain language (also in Azerbaijani or Russian):
   “How much did I spend on taxis this month?” — answers are looked up in your real data.
+- **Your Home screen, your way.** Tap **Customize** on Home to move, hide or resize blocks, switch columns, and add
+  your own widgets right there. **Notes** keep reminders and checklists. Seven **themes** (Light, Dark, Sand, Forest,
+  Rose, Midnight, Automatic).
+- **Fix what the bank got wrong.** Change a transaction's amount, direction, date, time or card; your card balance
+  follows. Deleting a transaction also undoes its effect on the balance. “Run my rules again” re‑applies your rules
+  to one transaction.
 - **Also:** cash expenses with one tap (or by Telegram: `12.5 taxi`), PDF/CSV statement import with duplicate
   detection, select many transactions to recategorize / tag as transfers / hide / delete at once, CSV/JSON export,
   dark mode, installable on your phone.

@@ -4,7 +4,20 @@ import type { AppEnv } from "../env";
 import type { Transaction } from "@shared/types";
 import { badRequest, body, intParam, notFound } from "../lib/http";
 import { all, first, nowIso, placeholders, run, type SqlValue } from "../lib/db";
-import { createContext, createTransaction, scanTransferPairs } from "../services/transactions";
+import {
+  balanceEffect,
+  balanceStatements,
+  createContext,
+  createTransaction,
+  deleteTransactions,
+  loadBalanceAccounts,
+  scanTransferPairs,
+  type BalanceRow,
+} from "../services/transactions";
+import { getSettings } from "../services/settings";
+import { contextFor, loadForRules } from "../services/rules";
+import { applyRules, mergeTags } from "@shared/rules";
+import type { Rule } from "@shared/types";
 import { defaultCategoryFor, loadCategories, setMerchantCategory, upsertMerchant } from "../services/categorize";
 import { afterTransactions } from "../services/alerts";
 import { TX_SELECT } from "../services/analytics";
@@ -183,6 +196,8 @@ const PatchTx = z.object({
   merchant_name: z.string().min(1).max(120).optional(),
   account_id: z.number().int().nullable().optional(),
   date: ymd.optional(),
+  /** Local time of day, HH:MM (Baku). */
+  time: z.string().regex(/^\d{2}:\d{2}$/).optional(),
   amount: z.number().int().positive().optional(),
   direction: z.enum(["in", "out"]).optional(),
   reviewed: z.boolean().optional(),
@@ -228,18 +243,49 @@ app.patch("/:id", async (c) => {
   if (input.excluded !== undefined) set("excluded", input.excluded ? 1 : 0);
   if (input.reviewed) set("needs_review", 0);
   if (input.account_id !== undefined) set("account_id", input.account_id);
-  if (input.date !== undefined) {
-    // Move to the new day, keeping the time of day.
-    const shift = Date.parse(`${input.date}T00:00:00Z`) - Date.parse(`${tx.local_date}T00:00:00Z`);
-    set("local_date", input.date);
-    set("occurred_at", new Date(Date.parse(tx.occurred_at) + shift).toISOString());
+  if (input.date !== undefined || input.time !== undefined) {
+    // Move to the new day and/or time of day (Baku time).
+    const offset = (await getSettings(c.env)).tz_offset_minutes;
+    const local = new Date(Date.parse(tx.occurred_at) + offset * 60_000);
+    const day = input.date ?? tx.local_date;
+    const [h, mi] = input.time
+      ? input.time.split(":").map(Number)
+      : [local.getUTCHours(), local.getUTCMinutes()];
+    const [y, mo, d] = day.split("-").map(Number);
+    set("local_date", day);
+    set("occurred_at", new Date(Date.UTC(y, mo - 1, d, h, mi) - offset * 60_000).toISOString());
   }
+  let newAmount = tx.amount;
+  let newBase = tx.amount_base;
   if (input.amount !== undefined || input.direction !== undefined) {
     const abs = input.amount ?? Math.abs(tx.amount);
     const dir = input.direction ?? (tx.amount >= 0 ? "in" : "out");
-    const signed = dir === "in" ? abs : -abs;
-    set("amount", signed);
-    set("amount_base", tx.currency === "AZN" ? signed : await convert(c.env.DB, signed, tx.currency, "AZN", tx.local_date));
+    newAmount = dir === "in" ? abs : -abs;
+    newBase = tx.currency === "AZN" ? newAmount : await convert(c.env.DB, newAmount, tx.currency, "AZN", input.date ?? tx.local_date);
+    set("amount", newAmount);
+    set("amount_base", newBase);
+    // Direction decides income vs expense unless the owner marked it as a transfer.
+    if (input.kind === undefined && input.category_id === undefined && tx.kind !== "transfer" && (newAmount >= 0) !== (tx.amount >= 0)) {
+      const idx = await loadCategories(c.env.DB);
+      const cat = defaultCategoryFor(idx, newAmount, tx.tx_type);
+      set("kind", cat?.kind ?? (newAmount >= 0 ? "income" : "expense"));
+      if (cat) set("category_id", cat.id);
+      set("category_source", "user");
+    }
+  }
+  // Keep card balances in step: undo the old effect, apply the new one. The row keeps
+  // its original time for this check so moving the date never changes the balance.
+  if (input.amount !== undefined || input.direction !== undefined || input.account_id !== undefined) {
+    const newAccountId = input.account_id !== undefined ? input.account_id : tx.account_id;
+    const accounts = await loadBalanceAccounts(c.env.DB, [tx.account_id, newAccountId].filter((x): x is number => x !== null));
+    const before: BalanceRow = tx;
+    const after: BalanceRow = { ...tx, account_id: newAccountId, amount: newAmount, amount_base: newBase };
+    const deltas = new Map<number, number>();
+    if (tx.account_id !== null) deltas.set(tx.account_id, -balanceEffect(before, accounts.get(tx.account_id)));
+    if (newAccountId !== null) deltas.set(newAccountId, (deltas.get(newAccountId) ?? 0) + balanceEffect(after, accounts.get(newAccountId)));
+    if (tx.balance_after !== null && newAccountId === tx.account_id) set("balance_after", tx.balance_after + (newAmount - tx.amount));
+    const stmts = balanceStatements(c.env.DB, deltas);
+    if (stmts.length) await c.env.DB.batch(stmts);
   }
   if (input.merchant_name) {
     const merchant = await upsertMerchant(c.env.DB, input.merchant_name);
@@ -258,6 +304,41 @@ app.patch("/:id", async (c) => {
   return c.json({ ok: true, applied_to_others: applied });
 });
 
+/** "Run my rules again": useful after editing a record, e.g. when the bank's later message looked different. */
+app.post("/:id/apply-rules", async (c) => {
+  const id = intParam(c, "id");
+  const [t] = await loadForRules(c.env.DB, id);
+  if (!t) notFound();
+  const [settings, idx, rules] = await Promise.all([
+    getSettings(c.env),
+    loadCategories(c.env.DB),
+    all<Rule>(c.env.DB, "SELECT * FROM rules WHERE enabled = 1 ORDER BY priority, id"),
+  ]);
+  const fx = applyRules(rules, contextFor(t, idx, settings.tz_offset_minutes));
+  if (!fx.rule_ids.length) return c.json({ matched: 0 });
+
+  const sets: string[] = ["updated_at = ?"];
+  const params: SqlValue[] = [nowIso()];
+  const cat = fx.category_id ? idx.byId.get(fx.category_id) : undefined;
+  let kind: string | null = null;
+  let categoryId: number | null = null;
+  if (cat) {
+    categoryId = cat.id;
+    kind = fx.kind ?? cat.kind;
+  } else if (fx.kind && fx.kind !== t.kind) {
+    kind = fx.kind;
+    categoryId = fx.kind === "transfer" ? (idx.bySlug.get("transfer.own")?.id ?? null) : (defaultCategoryFor(idx, t.amount, t.tx_type)?.id ?? null);
+  }
+  if (categoryId) sets.push("category_id = ?", "kind = ?", "category_source = 'rule'", "needs_review = 0"), params.push(categoryId, kind);
+  if (fx.excluded !== null) sets.push("excluded = ?"), params.push(fx.excluded ? 1 : 0);
+  if (fx.tags.length) sets.push("tags = ?"), params.push(mergeTags(t.tags, fx.tags));
+  if (fx.note && !t.note) sets.push("note = ?"), params.push(fx.note);
+  await run(c.env.DB, `UPDATE transactions SET ${sets.join(", ")} WHERE id = ?`, ...params, id);
+  if (fx.merchant_name && t.merchant_id) await run(c.env.DB, "UPDATE merchants SET name = ?, updated_at = ? WHERE id = ?", fx.merchant_name, nowIso(), t.merchant_id);
+  await run(c.env.DB, `UPDATE rules SET hits = hits + 1 WHERE id IN (${placeholders(fx.rule_ids.length)})`, ...fx.rule_ids);
+  return c.json({ matched: fx.rule_ids.length });
+});
+
 app.post("/bulk", async (c) => {
   const input = await body(
     c,
@@ -273,8 +354,7 @@ app.post("/bulk", async (c) => {
   );
   const ph = placeholders(input.ids.length);
   if (input.delete) {
-    await run(c.env.DB, `UPDATE transactions SET pair_id = NULL WHERE pair_id IN (${ph})`, ...input.ids);
-    await run(c.env.DB, `DELETE FROM transactions WHERE id IN (${ph})`, ...input.ids);
+    await deleteTransactions(c.env.DB, input.ids);
     return c.json({ ok: true });
   }
   const now = nowIso();
@@ -299,9 +379,7 @@ app.post("/bulk", async (c) => {
 
 app.delete("/:id", async (c) => {
   const id = intParam(c, "id");
-  await run(c.env.DB, "UPDATE raw_messages SET transaction_id = NULL, status = 'ignored' WHERE transaction_id = ?", id);
-  await run(c.env.DB, "UPDATE transactions SET pair_id = NULL WHERE pair_id = ?", id);
-  await run(c.env.DB, "DELETE FROM transactions WHERE id = ?", id);
+  await deleteTransactions(c.env.DB, [id]);
   return c.json({ ok: true });
 });
 

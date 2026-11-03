@@ -1,11 +1,11 @@
 import { Hono } from "hono";
 import { z } from "zod";
 import type { AppEnv } from "../env";
-import { body, intParam } from "../lib/http";
-import { all, nowIso, run } from "../lib/db";
+import { badRequest, body, intParam, notFound } from "../lib/http";
+import { all, first, insert, nowIso, run } from "../lib/db";
 import { periodFor, shiftPeriod } from "@shared/money";
 import { loadCategories } from "../services/categorize";
-import { budgetStatus, rollUp, spendingByCategory } from "../services/budgets";
+import { budgetStatus, rangeBudgetStatuses, rollUp, spendingByCategory } from "../services/budgets";
 import { getSettings, setSetting } from "../services/settings";
 import { today } from "../services/analytics";
 
@@ -23,7 +23,95 @@ app.get("/", async (c) => {
   const hist = rollUp(idx, await spendingByCategory(c.env.DB, p3.start, p1.end));
   const average: Record<number, number> = {};
   for (const [id, v] of hist) average[id] = Math.round(v / 3);
-  return c.json({ period, ...status, average_last_3: average });
+  return c.json({ period, ...status, average_last_3: average, ranges: await rangeBudgetStatuses(c.env.DB, idx, now) });
+});
+
+// ---------------------------------------------------------------------------
+// Budgets for a calendar range (overall or per category)
+
+const ymd = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
+const RangeInput = z.object({
+  name: z.string().trim().max(60).nullable().optional(),
+  category_id: z.number().int().nullable(),
+  amount: z.number().int().min(1),
+  alert_pct: z.number().int().min(10).max(100).default(80),
+  scope: z.enum(["days", "dates"]),
+  start_day: z.number().int().min(1).max(31).nullable().optional(),
+  end_day: z.number().int().min(1).max(31).nullable().optional(),
+  start_date: ymd.nullable().optional(),
+  end_date: ymd.nullable().optional(),
+});
+
+async function checkedRange(c: Parameters<typeof body>[0]) {
+  const r = await body(c, RangeInput);
+  if (r.scope === "days") {
+    if (!r.start_day || !r.end_day) badRequest("Choose the first and last day of the month");
+  } else {
+    if (!r.start_date || !r.end_date) badRequest("Choose a start and an end date");
+    if (r.end_date < r.start_date) badRequest("The end date is before the start date");
+  }
+  if (r.category_id !== null && !(await first(c.env.DB, "SELECT id FROM categories WHERE id = ?", r.category_id))) badRequest("Unknown category");
+  const days = r.scope === "days";
+  return {
+    name: r.name || null,
+    category_id: r.category_id,
+    amount: r.amount,
+    alert_pct: r.alert_pct,
+    scope: r.scope,
+    start_day: days ? r.start_day! : null,
+    end_day: days ? r.end_day! : null,
+    start_date: days ? null : r.start_date!,
+    end_date: days ? null : r.end_date!,
+  };
+}
+
+app.post("/ranges", async (c) => {
+  const r = await checkedRange(c);
+  const now = nowIso();
+  const id = await insert(
+    c.env.DB,
+    `INSERT INTO range_budgets (name, category_id, amount, alert_pct, scope, start_day, end_day, start_date, end_date, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    r.name,
+    r.category_id,
+    r.amount,
+    r.alert_pct,
+    r.scope,
+    r.start_day,
+    r.end_day,
+    r.start_date,
+    r.end_date,
+    now,
+    now,
+  );
+  return c.json({ id });
+});
+
+app.put("/ranges/:id", async (c) => {
+  const id = intParam(c, "id");
+  const r = await checkedRange(c);
+  if (!(await first(c.env.DB, "SELECT id FROM range_budgets WHERE id = ?", id))) notFound();
+  await run(
+    c.env.DB,
+    `UPDATE range_budgets SET name = ?, category_id = ?, amount = ?, alert_pct = ?, scope = ?, start_day = ?, end_day = ?, start_date = ?, end_date = ?, updated_at = ? WHERE id = ?`,
+    r.name,
+    r.category_id,
+    r.amount,
+    r.alert_pct,
+    r.scope,
+    r.start_day,
+    r.end_day,
+    r.start_date,
+    r.end_date,
+    nowIso(),
+    id,
+  );
+  return c.json({ ok: true });
+});
+
+app.delete("/ranges/:id", async (c) => {
+  await run(c.env.DB, "DELETE FROM range_budgets WHERE id = ?", intParam(c, "id"));
+  return c.json({ ok: true });
 });
 
 app.put("/", async (c) => {

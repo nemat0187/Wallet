@@ -11,7 +11,7 @@ import { Button, Chip, Empty, ErrorNote, Label, Sheet, Spinner, Toggle, clsx, er
 import { PageHeader } from "../components/Layout";
 import { WidgetCard } from "../components/Widget";
 import { WidgetEditor } from "../components/WidgetEditor";
-import { useDashboards, type Dashboard } from "../components/HomeDashboards";
+import { useDashboards, type Dashboard } from "../lib/dashboards";
 
 /** Save a dashboard, updating the cached list right away so the screen never waits. */
 function useSaveDashboard() {

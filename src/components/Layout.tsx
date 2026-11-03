@@ -15,6 +15,7 @@ import {
   Settings,
   Plus,
   LayoutDashboard,
+  StickyNote,
 } from "lucide-react";
 import { clsx } from "../lib/ui";
 import { useBootstrap } from "../lib/data";
@@ -33,6 +34,7 @@ const primary = [
 const secondary = [
   { to: "/dashboards", label: "My dashboards", icon: LayoutDashboard },
   { to: "/analytics", label: "Analytics", icon: BarChart3 },
+  { to: "/notes", label: "Notes", icon: StickyNote },
   { to: "/categories", label: "Categories", icon: Tags },
   { to: "/merchants", label: "Merchants & rules", icon: Store },
   { to: "/accounts", label: "Cards & accounts", icon: CreditCard },

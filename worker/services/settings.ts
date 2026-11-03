@@ -1,5 +1,7 @@
 import type { Env } from "../env";
 import type { Settings } from "@shared/types";
+import type { HomeItem } from "@shared/home";
+import { HomeLayoutSchema } from "../routes/dashboards";
 import { all, run } from "../lib/db";
 
 export const MODEL_OPTIONS = ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"] as const;
@@ -19,6 +21,7 @@ const DEFAULTS: Record<string, string> = {
   notify_budget_alerts: "1",
   notify_reports: "1",
   atm_as_transfer: "0",
+  home_layout: "",
 };
 
 /** Keys the web app may change through PATCH /api/settings, with validation. */
@@ -35,6 +38,12 @@ export const EDITABLE: Record<string, (v: unknown) => string | null> = {
   notify_budget_alerts: bool,
   notify_reports: bool,
   atm_as_transfer: bool,
+  // null = back to the default layout
+  home_layout: (v) => {
+    if (v === null) return "";
+    const parsed = HomeLayoutSchema.safeParse(v);
+    return parsed.success ? JSON.stringify(parsed.data) : null;
+  },
 };
 
 function bool(v: unknown): string | null {
@@ -64,6 +73,16 @@ export async function setSetting(db: D1Database, key: string, value: string | nu
     );
 }
 
+function parseLayout(raw: string | undefined): HomeItem[] | null {
+  if (!raw) return null;
+  try {
+    const parsed = HomeLayoutSchema.safeParse(JSON.parse(raw));
+    return parsed.success ? (parsed.data as HomeItem[]) : null;
+  } catch {
+    return null;
+  }
+}
+
 export function toSettings(raw: Record<string, string>, env: Env): Settings {
   return {
     month_start_day: Number(raw.month_start_day) || 1,
@@ -82,6 +101,7 @@ export function toSettings(raw: Record<string, string>, env: Env): Settings {
     notify_budget_alerts: raw.notify_budget_alerts === "1",
     notify_reports: raw.notify_reports === "1",
     atm_as_transfer: raw.atm_as_transfer === "1",
+    home_layout: parseLayout(raw.home_layout),
     totp_enabled: Boolean(raw.totp_secret),
     last_message_at: raw.last_message_at || null,
   };

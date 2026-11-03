@@ -8,6 +8,7 @@ import { del, get, patch, post } from "../lib/api";
 import { useBootstrap, useRefresh } from "../lib/data";
 import { Button, ErrorNote, Label, Segmented, Spinner, Toggle, clsx, errorText, useCopy, useToast } from "../lib/ui";
 import { PageHeader } from "../components/Layout";
+import { THEMES, applyTheme, savedTheme, type ThemeId } from "../lib/theme";
 
 export default function SettingsPage() {
   const boot = useBootstrap();
@@ -629,36 +630,48 @@ function describeAgent(ua: string | null): string {
 // ---------------------------------------------------------------------------
 
 function Appearance() {
-  const [theme, setTheme] = useState<"system" | "light" | "dark">(() => {
-    try {
-      return (localStorage.getItem("wallet-theme") as "light" | "dark" | null) ?? "system";
-    } catch {
-      return "system";
-    }
-  });
-  useEffect(() => {
-    if (theme === "system") delete document.documentElement.dataset.theme;
-    else document.documentElement.dataset.theme = theme;
-    try {
-      if (theme === "system") localStorage.removeItem("wallet-theme");
-      else localStorage.setItem("wallet-theme", theme);
-    } catch {
-      // storage unavailable
-    }
-  }, [theme]);
+  const [theme, setTheme] = useState<ThemeId>(savedTheme);
+  const choose = (id: ThemeId) => {
+    setTheme(id);
+    applyTheme(id);
+  };
   return (
     <Card id="appearance" icon={<Palette size={20} />} title="Appearance">
-      <Segmented
-        value={theme}
-        onChange={setTheme}
-        options={[
-          { value: "system", label: "Automatic" },
-          { value: "light", label: "Light" },
-          { value: "dark", label: "Dark" },
-        ]}
-      />
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3" role="radiogroup" aria-label="Theme">
+        {THEMES.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            role="radio"
+            aria-checked={theme === t.id}
+            onClick={() => choose(t.id)}
+            className={clsx(
+              "rounded-2xl border p-2.5 text-left transition-colors",
+              theme === t.id ? "border-accent bg-accent-soft" : "border-line bg-surface hover:bg-surface-2",
+            )}
+          >
+            <span className="flex h-10 overflow-hidden rounded-lg border border-line" aria-hidden>
+              {t.id === "system" ? (
+                <>
+                  <span className="flex-1" style={{ background: "#f2f5f4" }} />
+                  <span className="flex-1" style={{ background: "#0f1819" }} />
+                </>
+              ) : (
+                <>
+                  <span className="flex-1" style={{ background: t.swatch[0] }} />
+                  <span className="flex-1" style={{ background: t.swatch[1] }} />
+                  <span className="w-4" style={{ background: t.swatch[2] }} />
+                </>
+              )}
+            </span>
+            <span className="mt-1.5 block text-sm font-medium">{t.label}</span>
+            <span className="block text-[12px] leading-snug text-ink-3">{t.hint}</span>
+          </button>
+        ))}
+      </div>
       <p className="mt-3 text-sm text-ink-2">
-        Tip: add this app to your home screen (Safari: Share → Add to Home Screen; Chrome: ⋮ → Add to Home screen) to open it like a normal app.
+        The theme is remembered on this device. Tip: add this app to your home screen (Safari: Share → Add to Home Screen; Chrome: ⋮ → Add to Home screen) to open it
+        like a normal app.
       </p>
     </Card>
   );

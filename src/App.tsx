@@ -27,6 +27,7 @@ const Budgets = page(() => import("./pages/Budgets"));
 const Insights = page(() => import("./pages/Insights"));
 const Analytics = page(() => import("./pages/Analytics"));
 const Dashboards = page(() => import("./pages/Dashboards"));
+const Notes = page(() => import("./pages/Notes"));
 const Categories = page(() => import("./pages/Categories"));
 const Merchants = page(() => import("./pages/Merchants"));
 const Accounts = page(() => import("./pages/Accounts"));
@@ -78,6 +79,7 @@ export default function App() {
           <Route path="insights" element={<Insights />} />
           <Route path="analytics" element={<Analytics />} />
           <Route path="dashboards" element={<Dashboards />} />
+          <Route path="notes" element={<Notes />} />
           <Route path="categories" element={<Categories />} />
           <Route path="merchants" element={<Merchants />} />
           <Route path="accounts" element={<Accounts />} />

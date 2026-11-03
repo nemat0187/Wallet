@@ -64,6 +64,29 @@
 9. **Alerts:** Telegram message per transaction (optional), unusual‑amount warning, budget warnings once per
    threshold per month.
 
+## Card balances
+
+`accounts.balance` is a snapshot: the “Balans” from the newest bank message, or a running sum for the cash wallet.
+A transaction is *counted* in it when it carries its own `balance_after` and is not newer than the snapshot, or is a
+manual entry on the cash wallet (`balanceEffect` in `worker/services/transactions.ts`). Deleting a counted
+transaction, or editing its amount, direction or card, moves the balance by the same amount (and shifts the row's
+`balance_after`). Imports and rows without a balance never move it; moving a date doesn't either.
+
+## Budgets for a date range
+
+`range_budgets` (migration 0003) sits next to the monthly `budgets`: `category_id` NULL means all spending; `scope`
+`days` stores `start_day`/`end_day` that repeat every month, `dates` an exact range. `rangePeriod`
+(`shared/budgets.ts`) picks the window that contains today, else the latest finished one, clamping short months and
+wrapping when the end day is before the start day. Status and pace reuse `makeStatus`; alerts are keyed by budget id
+and window start so each level is sent once per round.
+
+## Home layout
+
+`settings.home_layout` holds a JSON list `{id, col: main|aside|wide, hidden?, widget?}`. Built‑in blocks use their
+name as id, pinned dashboards `dash:<id>`, widgets made on Home `w:<id>` with the widget embedded.
+`resolveHomeLayout` (`shared/home.ts`) reconciles it with what exists (new blocks appear, deleted dashboards drop).
+No saved layout means the original arrangement.
+
 ## Custom dashboards (`worker/services/query.ts`, `shared/widgets.ts`)
 
 A dashboard is a named list of widgets stored as JSON (`dashboards` table). Each widget is one query: a metric

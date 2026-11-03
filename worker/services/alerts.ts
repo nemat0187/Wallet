@@ -7,7 +7,7 @@ import type { Transaction } from "@shared/types";
 import { formatMoney, shiftPeriod } from "@shared/money";
 import { all, first, nowIso, placeholders, run } from "../lib/db";
 import { categorizePendingWithAI, categoryPath, loadCategories } from "./categorize";
-import { budgetStatus } from "./budgets";
+import { budgetStatus, rangeBudgetStatuses } from "./budgets";
 import { getSettings } from "./settings";
 import { escapeHtml, notifyOwner } from "./telegram";
 import { today } from "./analytics";
@@ -78,6 +78,22 @@ export async function checkBudgetAlerts(env: Env): Promise<void> {
       level === 100
         ? `🔴 <b>${escapeHtml(name)}</b> is over budget: ${formatMoney(b.spent)} of ${formatMoney(b.amount)}.`
         : `🟠 <b>${escapeHtml(name)}</b>: ${Math.round(b.pct)}% of the budget used (${formatMoney(b.spent)} of ${formatMoney(b.amount)}). At this pace you'll reach ${formatMoney(b.projected)} by ${period.end}.`;
+    if (await notifyOwner(env, text)) await run(env.DB, "INSERT OR IGNORE INTO notifications_sent (key, created_at) VALUES (?, ?)", key, nowIso());
+  }
+
+  // Budgets for a calendar range, once per level per round.
+  for (const b of await rangeBudgetStatuses(env.DB, idx, now)) {
+    if (b.state !== "active") continue;
+    const level = b.spent > b.amount ? 100 : b.pct >= b.alert_pct ? b.alert_pct : 0;
+    if (!level) continue;
+    const key = `range:${b.range.id}:${b.period.start}:${level}`;
+    if (await first<{ key: string }>(env.DB, "SELECT key FROM notifications_sent WHERE key = ?", key)) continue;
+    const name = b.range.name || (b.category_id ? categoryPath(idx, b.category_id) : "Overall budget");
+    const label = `${escapeHtml(name)} (${escapeHtml(b.period.label)})`;
+    const text =
+      level === 100
+        ? `🔴 <b>${label}</b> is over budget: ${formatMoney(b.spent)} of ${formatMoney(b.amount)}.`
+        : `🟠 <b>${label}</b>: ${Math.round(b.pct)}% of the budget used (${formatMoney(b.spent)} of ${formatMoney(b.amount)}). At this pace you'll reach ${formatMoney(b.projected)} by ${b.period.end}.`;
     if (await notifyOwner(env, text)) await run(env.DB, "INSERT OR IGNORE INTO notifications_sent (key, created_at) VALUES (?, ?)", key, nowIso());
   }
 }

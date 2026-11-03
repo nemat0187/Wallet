@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { Sparkles, MessageSquareText, Trash2, EyeOff, Check, ArrowLeftRight, ListFilter } from "lucide-react";
+import { Sparkles, MessageSquareText, Trash2, EyeOff, Check, ArrowLeftRight, ListFilter, Pencil, Wand2 } from "lucide-react";
 import type { Transaction, TxKind } from "@shared/types";
-import { formatDay, formatMoney } from "@shared/money";
-import { del, get, patch } from "../lib/api";
-import { useAccounts, useCategories, useRefresh } from "../lib/data";
+import { formatDay, formatMoney, parseAmount } from "@shared/money";
+import { del, get, patch, post } from "../lib/api";
+import { useAccounts, useBootstrap, useCategories, useRefresh } from "../lib/data";
 import { Button, ErrorNote, Label, Segmented, Sheet, Spinner, Toggle, clsx, errorText, useToast } from "../lib/ui";
 import { CategoryPicker } from "./CategoryPicker";
 import { PairSummary, usePairActions } from "./Transfers";
@@ -192,6 +192,12 @@ function EditorBody({ tx, onClose, onMakeRule }: { tx: Transaction; onClose: () 
   const [accountId, setAccountId] = useState<number | null>(tx.account_id);
   const [showMessage, setShowMessage] = useState(false);
   const [withPair, setWithPair] = useState(true);
+  const tz = useBootstrap().data?.settings.tz_offset_minutes ?? 240;
+  const [editingAmount, setEditingAmount] = useState(false);
+  const [amountText, setAmountText] = useState(String(Math.abs(tx.amount) / 100));
+  const [direction, setDirection] = useState<"in" | "out">(tx.amount >= 0 ? "in" : "out");
+  const [date, setDate] = useState(tx.local_date);
+  const [time, setTime] = useState(localTime(tx.occurred_at, tz));
   const { mark, dismiss } = usePairActions();
   useEffect(() => setPicking(false), [categoryId]);
   const pair = detail.data?.pair ?? null;
@@ -205,6 +211,12 @@ function EditorBody({ tx, onClose, onMakeRule }: { tx: Transaction; onClose: () 
         body.category_id = categoryId;
         body.apply_to_merchant = Boolean(tx.merchant_id) && applyAll;
       }
+      const newAbs = parseAmount(amountText);
+      if (newAbs === null || newAbs <= 0) throw new Error("Enter an amount greater than zero.");
+      if (Math.abs(newAbs) !== Math.abs(tx.amount)) body.amount = Math.abs(newAbs);
+      if (direction !== (tx.amount >= 0 ? "in" : "out")) body.direction = direction;
+      if (date !== tx.local_date) body.date = date;
+      if (time !== localTime(tx.occurred_at, tz)) body.time = time;
       if (kind !== tx.kind) {
         body.kind = kind;
         if (pairFollows && withPair && (kind === "transfer" || tx.kind === "transfer")) body.include_pair = true;
@@ -225,6 +237,17 @@ function EditorBody({ tx, onClose, onMakeRule }: { tx: Transaction; onClose: () 
       onClose();
     },
   });
+  const rerun = useMutation({
+    mutationFn: () => post<{ matched: number }>(`/transactions/${tx.id}/apply-rules`),
+    onSuccess: (r) => {
+      toast(r.matched ? `Applied ${r.matched} ${r.matched === 1 ? "rule" : "rules"}` : "No rule matches this transaction");
+      if (r.matched) {
+        refresh();
+        onClose();
+      }
+    },
+    onError: (e) => toast(errorText(e), "error"),
+  });
   const remove = useMutation({
     mutationFn: () => del(`/transactions/${tx.id}`),
     onSuccess: () => {
@@ -241,8 +264,8 @@ function EditorBody({ tx, onClose, onMakeRule }: { tx: Transaction; onClose: () 
   return (
     <div className="flex flex-col gap-5">
       <div className="text-center">
-        <div className={clsx("text-4xl font-semibold tracking-tight num", tx.amount > 0 && "text-good")}>
-          {formatMoney(tx.amount, tx.currency, { sign: tx.amount > 0 })}
+        <div className={clsx("text-4xl font-semibold tracking-tight num", direction === "in" && "text-good")}>
+          {formatMoney(direction === "in" ? Math.abs(parseAmount(amountText) ?? 0) : -Math.abs(parseAmount(amountText) ?? 0), tx.currency, { sign: direction === "in" })}
         </div>
         {tx.orig_amount && tx.orig_currency ? (
           <div className="mt-1 text-sm text-ink-3 num">Paid {formatMoney(tx.orig_amount, tx.orig_currency)}</div>
@@ -252,6 +275,46 @@ function EditorBody({ tx, onClose, onMakeRule }: { tx: Transaction; onClose: () 
           {account ? ` · ${account.name}` : ""}
           {tx.balance_after !== null ? ` · balance after ${formatMoney(tx.balance_after, tx.currency)}` : ""}
         </div>
+      </div>
+
+      <div className="rounded-xl border border-line">
+        <button type="button" className="flex w-full items-center gap-2 px-3 py-2.5 text-left text-sm font-medium" onClick={() => setEditingAmount((e) => !e)} aria-expanded={editingAmount}>
+          <Pencil size={15} className="text-accent" aria-hidden />
+          <span className="flex-1">Amount, date &amp; time</span>
+          <span className="text-accent">{editingAmount ? "Hide" : "Change"}</span>
+        </button>
+        {editingAmount && (
+          <div className="flex flex-col gap-3 border-t border-line px-3 py-3">
+            <Segmented
+              value={direction}
+              onChange={setDirection}
+              options={[
+                { value: "out", label: "Money out" },
+                { value: "in", label: "Money in" },
+              ]}
+            />
+            <label className="block">
+              <Label>Amount ({tx.currency})</Label>
+              <input className="field" inputMode="decimal" value={amountText} onChange={(e) => setAmountText(e.target.value)} />
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <label className="block">
+                <Label>Date</Label>
+                <input type="date" className="field" value={date} onChange={(e) => e.target.value && setDate(e.target.value)} />
+              </label>
+              <label className="block">
+                <Label>Time</Label>
+                <input type="time" className="field" value={time} onChange={(e) => e.target.value && setTime(e.target.value)} />
+              </label>
+            </div>
+            {tx.source !== "manual" && (
+              <p className="text-[13px] text-ink-3">
+                This came from your bank. Changing it here only affects the app; your card balance moves by the difference. Use it when a payment was later corrected by the
+                bank.
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
       {tx.needs_review ? (
@@ -406,9 +469,14 @@ function EditorBody({ tx, onClose, onMakeRule }: { tx: Transaction; onClose: () 
         {detail.isLoading && <Spinner />}
       </div>
 
-      <button type="button" onClick={onMakeRule} className="flex items-center gap-2 self-start text-sm font-medium text-accent">
-        <ListFilter size={16} aria-hidden /> Create a rule from this transaction
-      </button>
+      <div className="flex flex-wrap gap-x-5 gap-y-2">
+        <button type="button" onClick={onMakeRule} className="flex items-center gap-2 text-sm font-medium text-accent">
+          <ListFilter size={16} aria-hidden /> Create a rule from this
+        </button>
+        <button type="button" onClick={() => rerun.mutate()} disabled={rerun.isPending} className="flex items-center gap-2 text-sm font-medium text-accent disabled:opacity-50">
+          <Wand2 size={16} aria-hidden /> Run my rules again
+        </button>
+      </div>
 
       <ErrorNote error={save.error} />
       <div className="flex gap-2">

@@ -6,9 +6,10 @@ import type { AppEnv } from "../env";
 import type { Category, Merchant, Rule } from "@shared/types";
 import { badRequest, body, intParam, notFound } from "../lib/http";
 import { all, first, insert, nowIso, run, type SqlValue } from "../lib/db";
-import { defaultCategoryFor, loadCategories, setMerchantCategory, type CategoryIndex } from "../services/categorize";
+import { defaultCategoryFor, loadCategories, setMerchantCategory } from "../services/categorize";
 import { getSettings } from "../services/settings";
-import { localParts, mergeTags, ruleMatches, type RuleContext } from "@shared/rules";
+import { mergeTags, ruleMatches } from "@shared/rules";
+import { contextFor, loadForRules } from "../services/rules";
 
 const app = new Hono<AppEnv>();
 
@@ -150,7 +151,7 @@ app.get("/rules", async (c) => c.json(await all<Rule>(c.env.DB, "SELECT * FROM r
 
 const ConditionSchema = z.union([
   z.object({
-    field: z.enum(["merchant", "description", "message", "any_text"]),
+    field: z.enum(["merchant", "title", "description", "message", "any_text"]),
     op: z.enum(["contains", "not_contains", "equals", "starts_with", "ends_with", "regex"]),
     value: z.string().max(200),
   }),
@@ -266,54 +267,6 @@ app.delete("/rules/:id", async (c) => {
   await run(c.env.DB, "DELETE FROM rules WHERE id = ?", intParam(c, "id"));
   return c.json({ ok: true });
 });
-
-interface TxForRules {
-  id: number;
-  local_date: string;
-  occurred_at: string;
-  amount: number;
-  currency: string;
-  orig_currency: string | null;
-  account_id: number | null;
-  merchant_raw: string | null;
-  merchant_name: string | null;
-  merchant_id: number | null;
-  description: string | null;
-  message: string | null;
-  tx_type: string | null;
-  category_id: number | null;
-  kind: string;
-  tags: string | null;
-  note: string | null;
-}
-
-async function loadForRules(db: D1Database): Promise<TxForRules[]> {
-  return all<TxForRules>(
-    db,
-    `SELECT t.id, t.local_date, t.occurred_at, t.amount, t.currency, t.orig_currency, t.account_id, t.merchant_raw, m.name AS merchant_name,
-            t.merchant_id, t.description, r.body AS message, t.tx_type, t.category_id, t.kind, t.tags, t.note
-       FROM transactions t LEFT JOIN merchants m ON m.id = t.merchant_id LEFT JOIN raw_messages r ON r.transaction_id = t.id
-      ORDER BY t.occurred_at DESC LIMIT 20000`,
-  );
-}
-
-function contextFor(t: TxForRules, idx: CategoryIndex, tz: number): RuleContext {
-  const { weekday, hour } = localParts(t.occurred_at, tz);
-  return {
-    merchant: t.merchant_name,
-    merchant_raw: t.merchant_raw,
-    description: t.description,
-    message: t.message,
-    amount: t.amount,
-    currency: t.orig_currency ?? t.currency,
-    account_id: t.account_id,
-    type: t.tx_type,
-    local_weekday: weekday,
-    local_hour: hour,
-    category_id: t.category_id,
-    category_parent_id: t.category_id ? (idx.byId.get(t.category_id)?.parent_id ?? null) : null,
-  };
-}
 
 function asRule(r: RuleBody, id = 0): Rule {
   const cols = ruleColumns(r);

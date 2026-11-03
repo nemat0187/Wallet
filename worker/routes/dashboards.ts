@@ -32,6 +32,18 @@ export const WidgetSchema = z.object({
   compare: z.boolean().default(false),
   size: z.enum(["half", "full"]).default("half"),
 });
+/** Layout of the Home screen (stored in the settings table). */
+export const HomeLayoutSchema = z
+  .array(
+    z.object({
+      id: z.string().min(1).max(40),
+      col: z.enum(["main", "aside", "wide"]),
+      hidden: z.boolean().optional(),
+      widget: WidgetSchema.optional(),
+    }),
+  )
+  .max(60);
+
 export const QuerySchema = z.object({
   metric: WidgetSchema.shape.metric,
   group_by: WidgetSchema.shape.group_by,

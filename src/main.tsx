@@ -4,16 +4,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter } from "react-router-dom";
 import { ApiError } from "./lib/api";
 import { ToastProvider } from "./lib/ui";
+import { initTheme } from "./lib/theme";
 import App from "./App";
 import "./styles.css";
 
-// Apply a saved light/dark preference before first paint.
-try {
-  const theme = localStorage.getItem("wallet-theme");
-  if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
-} catch {
-  // storage unavailable (private mode) — follow the system theme
-}
+// Apply the saved theme before first paint.
+initTheme();
 
 const queryClient = new QueryClient({
   defaultOptions: {

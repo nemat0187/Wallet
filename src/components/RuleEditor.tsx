@@ -29,6 +29,7 @@ type Field = Condition["field"];
 
 const FIELDS: { value: Field; label: string; group: string }[] = [
   { value: "merchant", label: "Merchant name", group: "Text" },
+  { value: "title", label: "Notification heading (first line)", group: "Text" },
   { value: "description", label: "Bank's description", group: "Text" },
   { value: "message", label: "Full bank message", group: "Text" },
   { value: "any_text", label: "Any text", group: "Text" },
@@ -62,7 +63,7 @@ const NUMBER_OPS: { value: NumberOp; label: string; symbol: string }[] = [
 ];
 
 const CURRENCIES = ["AZN", "USD", "EUR", "RUB", "TRY", "GBP", "GEL", "AED"];
-const TEXT_FIELDS: Field[] = ["merchant", "description", "message", "any_text"];
+const TEXT_FIELDS: Field[] = ["merchant", "title", "description", "message", "any_text"];
 const LIST_FIELDS: Field[] = ["account", "type", "weekday", "currency", "category"];
 
 function defaultCondition(field: Field): Condition {
