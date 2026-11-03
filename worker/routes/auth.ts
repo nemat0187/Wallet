@@ -202,9 +202,8 @@ app.get("/google/callback", async (c) => {
  * The code works once (it is deleted before it is checked), expires in minutes, and is useless without the verifier,
  * so another app that catches the wallet:// link cannot sign in with it.
  */
-app.post("/app-exchange", async (c) => {
-  if (!isAppClient(c)) throw new HTTPException(400, { message: "Send the header x-client: app" });
-  const { code, verifier } = await body(c, z.object({ code: z.string().min(20).max(100), verifier: z.string().min(43).max(128) }));
+/** Check a one-time app code and its PKCE verifier; returns the user, or null. The code is burned either way. */
+async function redeemAppCode(c: Context<AppEnv>, code: string, verifier: string): Promise<number | null> {
   const db = rawDb(c.env);
   const ip = clientIp(c);
   const wait = await lockedFor(db, ip);
@@ -216,9 +215,31 @@ app.post("/app-exchange", async (c) => {
   const proof = fresh ? base64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)))) : "";
   if (!row || !fresh || !(await safeEqual(proof, row.challenge))) {
     await recordFailure(db, ip);
-    throw new HTTPException(400, { message: "That sign-in link has expired or was already used. Please try again." });
+    return null;
   }
-  return signIn(c, row.user_id);
+  return row.user_id;
+}
+
+const CODE_SHAPE = z.object({ code: z.string().min(20).max(100), verifier: z.string().min(43).max(128) });
+
+app.post("/app-exchange", async (c) => {
+  if (!isAppClient(c)) throw new HTTPException(400, { message: "Send the header x-client: app" });
+  const { code, verifier } = await body(c, CODE_SHAPE);
+  const userId = await redeemAppCode(c, code, verifier);
+  if (userId === null) throw new HTTPException(400, { message: "That sign-in link has expired or was already used. Please try again." });
+  return signIn(c, userId);
+});
+
+/**
+ * For the app's WebView: the same exchange, but the answer is a normal browser sign-in. The app loads
+ * /api/auth/app-open?code=…&verifier=… in its WebView; the response sets the session cookie there and redirects to the
+ * website, so the signed-in state never passes through JavaScript. (With two-step on, the person lands on the code step.)
+ */
+app.get("/app-open", async (c) => {
+  const parsed = CODE_SHAPE.safeParse({ code: c.req.query("code"), verifier: c.req.query("verifier") });
+  const userId = parsed.success ? await redeemAppCode(c, parsed.data.code, parsed.data.verifier) : null;
+  if (userId === null) return c.redirect("/?auth=error");
+  return signIn(c, userId, true);
 });
 
 // Routes below require a session (and, for changes, a request from this site).

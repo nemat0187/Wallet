@@ -12,7 +12,8 @@ phase until the current one's acceptance tests are pasted and you have tried the
 You are building the Android app for "Wallet", a private expense tracker. The web app and server already exist and work;
 they live in another repository and **must not be changed or re-implemented**. The app is a Capacitor Android shell that
 loads the deployed website, plus a small native layer (notification listener with an offline queue, biometric lock,
-secure storage). It replaces the MacroDroid app that used to forward bank notifications.
+secure storage). It replaces the MacroDroid app: like MacroDroid it listens to **any app the user chooses** and lets the
+user build triggers, constraints and actions. Nothing about a specific bank is hard-coded.
 
 Rules, in priority order:
 1. Read `docs/MOBILE-HANDOFF.md` completely before doing anything. It is the single source of truth for the API
@@ -46,18 +47,27 @@ Phase 0; paste each result.
 Do **Phase 1** (section 6). Test on the three screen sizes listed. Include a short manual test script I can follow on my
 phone for back button, export download and keyboard behaviour.
 
-## Phase 2 prompt: Notification listener
-Do **Phase 2** (section 6) and the traps in section 5 (items 2 to 6). Before coding, tell me exactly how you will find
-the bank app's package name on my phone (logging `sbn.packageName` once in a debug build); I will confirm it. Build the
-queue and sender first and test them with the `adb` commands in the acceptance list; then the onboarding screen. All
-eight acceptance tests must be reported individually; test 8 is done by me on my phone with one real purchase.
+## Phase 2a prompt: Listener engine (no screens)
+Do **Phase 2a** (section 6) and the traps in section 5 (items 2 to 6b). Start with the rule engine as plain Kotlin with
+no Android classes and its unit tests (data model and evaluation rules exactly as written in section 6), then the encrypted
+queue and the sender, then the `NotificationListenerService`. Test with the `adb` commands in the acceptance list. All
+eight acceptance tests must be reported individually. There is no bank package name to find: the user chooses apps.
+
+## Phase 2b prompt: Macro screens
+Do **Phase 2b** (section 6): macros list, three-block editor (Trigger, Constraints, Actions), searchable app picker with
+"recently notified apps", test panel (notification text only in memory), status/onboarding screen. Follow MacroDroid's
+mental model; keep screens simple. Report each acceptance item, and give me a manual script for my phone.
+
+## Phase 2c prompt: SMS trigger (only if I ask for it)
+Do **Phase 2c** only if I say so. Otherwise answer "not requested" and stop.
 
 ## Phase 3 prompt: Biometric lock
 Do **Phase 3** (section 6). Biometrics only decide whether the web view is shown; the web PIN is untouched.
 
-## Phase 4 prompt: Google sign-in (only after the backend piece exists)
-Do **Phase 4** only if I tell you the server now offers `GET /api/auth/google/start?client=app`, redirect to
-`wallet://auth?code=…`, and `POST /api/auth/app-exchange`. If I have not said so, answer "blocked" and stop.
+## Phase 4 prompt: Google sign-in
+Do **Phase 4** (section 6) following section 5, trap 1 step by step: PKCE, Custom Tab, `wallet://auth` intent filter,
+then load `/api/auth/app-open?code=…&verifier=…` in the WebView. The server side already exists and is tested; do not
+change or re-implement it, and never open Google inside the WebView.
 
 ## Phase 5 prompt: Release
 Do **Phase 5** (section 6). Explain how I should back up the signing keystore before you create it. The release build

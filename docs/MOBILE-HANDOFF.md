@@ -15,10 +15,12 @@ Contents: [1 What exists](#1-what-exists) · [2 How it works](#2-how-it-works) �
 ## 1. What exists
 
 ### The idea
-A private expense and budget tracker for one person, later opened to friends. A bank (ABB) shows every card
-operation as a notification on the phone. The phone forwards that notification to the app's server, which reads it,
-files it under a category and updates budgets, charts and AI advice. On Android the forwarder was the free app
-MacroDroid; **the mobile app replaces MacroDroid** and wraps the web app.
+A private expense and budget tracker for one person, later opened to friends. Banks and payment apps (ABB today,
+**any app the user chooses**) show every card operation as a notification on the phone. The phone forwards the
+notifications the user selected to the app's server, which reads them, files them under a category and updates
+budgets, charts and AI advice. On Android the forwarder was the free app MacroDroid; **the mobile app replaces
+MacroDroid, and works like it: the user picks any apps to listen to and builds triggers (conditions) and actions,
+with no hard-coded bank.** The app also wraps the web app.
 
 ### What was built, in the order it was built
 1. **Core.** Cloudflare Worker + D1 (SQLite) + React web app. Bank message parser (Azerbaijani, English, Russian),
@@ -143,7 +145,9 @@ All paths are under the Worker origin (for example `https://wallet.<name>.worker
 | `POST /api/auth/login` `{password}` | Owner password. Success `{ok:true}` (+ `token` with `x-client: app`). With two-step: `{ok:false, mfa_required:true}` (+ `mfa_token` for app clients). `401` wrong password, `429` too many attempts |
 | `POST /api/auth/mfa/verify` `{code, mfa_token?}` | Code from the authenticator app or a recovery code. `mfa_token` is only honoured when `x-client: app` is sent. Success `{ok:true}` (+ `token`) |
 | `POST /api/auth/logout` | Ends the session (cookie or Bearer) |
-| `GET /api/auth/google/start` | Browser redirect flow for Google. **Not usable inside a WebView** (see trap 1) |
+| `GET /api/auth/google/start` | Browser redirect flow for Google (web). **Never open it inside the WebView** (Google refuses embedded browsers). For the app use the next two rows |
+| `GET /api/auth/google/start?client=app&challenge=<PKCE>` | Open this in a **Chrome Custom Tab**. `challenge` = base64url(SHA-256(verifier)) (43 chars; the app keeps the random `verifier`, at least 43 characters, secret). Google then returns the person to the app by redirecting the tab to `wallet://auth?code=<one-time code>` or `wallet://auth?status=<pending\|closed\|disabled\|busy\|cancelled\|error>`. `400` if the challenge is malformed |
+| `POST /api/auth/app-exchange` `{code, verifier}` + header `x-client: app` | Trades the one-time code for a session. Success `{ok:true, token}`; with two-step on `{ok:false, mfa_required:true, mfa_token}` then `POST /api/auth/mfa/verify {code, mfa_token}` (header `x-client: app`) returns the token. The code lives 5 minutes, works **once** (even a wrong verifier burns it) and is useless without the verifier. `400` = expired / used / wrong verifier, `429` = too many attempts. Verified by `npm run check:auth` |
 | `GET /api/bootstrap` | After sign-in: settings, counts, security state (`security.skipped`, two-step status), accounts summary, `origin` |
 
 ### The phone webhook (what replaces MacroDroid)
@@ -214,13 +218,20 @@ Rejected, with reasons:
 
 ## 5. Known traps and their fixes
 
-1. **Google sign-in does not work inside a WebView.** Google rejects embedded browsers (`disallowed_useragent`).
-   - Owner (password) login works in the WebView, so Phases 0–3 are unaffected.
-   - Friends who use Google need a **Chrome Custom Tab plus a one-time-code hand-off**. That needs a small, tested
-     *backend* addition that does not exist yet: `GET /api/auth/google/start?client=app` → after Google, redirect to
-     `wallet://auth?code=<one-time code>` → `POST /api/auth/app-exchange {code}` returns a session token. **Phase 4 is
-     blocked until the backend part exists; ask the owner to have it built in the web repository first. Do not
-     emulate it in the app.**
+1. **Google sign-in does not work inside a WebView** (Google rejects embedded browsers, `disallowed_useragent`).
+   **This is solved on the server and tested** (`npm run check:auth`); the app only has to follow this exact recipe:
+   1. Generate a random `verifier` (at least 43 URL-safe characters) and keep it in memory (or in a bundle that survives
+      the Custom Tab round trip). `challenge = base64url(SHA-256(verifier))` without padding (43 characters).
+   2. Open `<site>/api/auth/google/start?client=app&challenge=<challenge>` in a **Chrome Custom Tab** (never the WebView).
+   3. An intent filter for `wallet://auth` receives either `?code=<one-time code>` or `?status=<pending|closed|disabled|busy|cancelled|error>`.
+      Close the Custom Tab and show a clear message for every `status`.
+   4. With a `code`, load **in the WebView** `<site>/api/auth/app-open?code=<code>&verifier=<verifier>`. The server checks
+      both, sets the normal session cookie in the WebView and redirects to the website, already signed in (a person with
+      two-step verification lands on the code screen, which the website already handles). **No token passes through
+      JavaScript.** Then discard the verifier.
+   - `POST /api/auth/app-exchange` (token instead of cookie) exists for the optional bundled mode only; the recommended
+     shell does not use it.
+   - The owner's password login works inside the WebView without any of this, so Phases 0–3 do not depend on it.
 2. **Notification access is a special permission** the user grants in system settings (Settings → Notifications →
    Device & app notifications). Open it with `Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS`, and detect "not granted"
    (`NotificationManagerCompat.getEnabledListenerPackages`) to show a banner.
@@ -235,10 +246,18 @@ Rejected, with reasons:
 5. **Token handling.** The webhook token comes from the web app (Settings → Phone connection). Hand it to native code
    through a Capacitor plugin call (for example `WalletNative.pair({ token, baseUrl })`), store it only in
    Keystore-backed `EncryptedSharedPreferences`, never log it, never put it in the URL of anything that is logged.
-6. **Forward only the bank.** An allow-list of Android package names (default: the ABB app). The package id must be
-   **confirmed on a real phone** by logging `sbn.packageName` once during development (do not guess it). Ignore
-   ongoing/group-summary notifications, notifications from this app itself, and anything not on the list. Never log
-   notification text.
+6. **Listen universally, forward only what the user configured.** There is **no hard-coded bank or package name.** The
+   user chooses the apps (a searchable list of installed apps from `PackageManager`) and builds triggers (section 6,
+   Phase 2). A notification from an app that no enabled trigger selects is dropped immediately in memory: never
+   stored, never sent, never logged. Always ignore this app's own notifications, ongoing/foreground-service
+   notifications and group summaries (unless a trigger explicitly asks for them). Never log notification text. On
+   Android 11+ the app needs `QUERY_ALL_PACKAGES` (or a `<queries>` launcher-intent filter) to list installed apps;
+   declare it and explain why in the onboarding text.
+6b. **Other banks' messages may not parse.** The server parser (`worker/services/parser.ts`) understands ABB's layout and
+   common Azerbaijani/English/Russian wording. A different app can produce a message that lands in the web app's
+   Inbox as `failed` (status in the ingest reply). That is a *parsing* task for the web repository (new sample →
+   parser/test), not something the Android app should work around; the app's job is to deliver the raw title and
+   text faithfully and to include the app's package name in `package` so the server records the sender.
 7. **Lifecycle details**: Android 13+ runtime notification permission is for *showing* notifications (not needed for
    listening); the listener is a bound system service, no foreground service required; handle the WebView back button
    (go back in history, then exit); `FLAG_SECURE` on the app window so screenshots/recents hide money; no cleartext
@@ -277,20 +296,113 @@ file (`config.json` or a Gradle property), never scattered.
   bars, keyboard never hides the amount field of "Add transaction", back button never closes the app from a sub-page,
   exporting CSV produces a file the user can open, rotation is locked.
 
-### Phase 2, Notification listener (replaces MacroDroid)
-- `NotificationListenerService`, package allow-list, encrypted queue, WorkManager sender (contract in section 3),
-  Capacitor plugin with `pair`, `status` (`listenerEnabled`, `queued`, `lastReceivedAt`, `lastUploadedAt`, `lastError`),
-  `openListenerSettings`, `requestBatteryExemption`; a native onboarding screen (what, why, three steps with deep
-  links, a "Test" button that sends a sample) shown until everything is green; the web Settings page keeps working.
-- **Accept (all required):**
-  1. Post a fake ABB-style notification with `adb shell cmd notification post -S bigtext -t '💸 Ödəniş: -5.86₼' abbtest 'Ödəniş: 5.86 AZN\nObyekt: TEST CAFE\nKart: *1234\nTarix: 03.11.2026 15:10'` (the posting package is the shell; add it temporarily to the allow-list in a debug build only) → a transaction appears in the web app within 10 s.
+### Phase 2, Universal notification listener with triggers and actions (replaces MacroDroid)
+Split into three shippable steps. Each ends with its own acceptance tests and a git tag (`phase-2a`, `2b`, `2c`).
+
+**2a, Engine: listener, queue, sender (no screens yet).** `NotificationListenerService`; a **rule engine**; an
+encrypted queue (Room/SQLite, encrypted); a WorkManager sender (contract in section 3); a Capacitor plugin with `pair`,
+`status` (`listenerEnabled`, `queued`, `lastReceivedAt`, `lastUploadedAt`, `lastError`), `openListenerSettings`,
+`requestBatteryExemption`. Until 2b exists a single built-in rule "forward everything from package X" configured in a
+debug build is enough.
+
+*Rule data model (stored locally, JSON-serializable, versioned with a `schema` number so it can migrate):*
+```
+Rule   { id, name, enabled, trigger: Trigger, constraints: Constraint[], actions: Action[], stopAfter: boolean }
+Trigger{ type: "notification", apps: string[] /* package names; empty = any app */,
+         when: "posted" /* posted | removed is optional later */ }
+Constraint { field: "title"|"text"|"titleOrText"|"app", op: "contains"|"notContains"|"startsWith"|"endsWith"|"regex"|"equals",
+             value: string, ignoreCase: boolean }          // all constraints must match (AND); groups with OR are optional later
+Action { type: "sendToWallet", template: string }   // default template "{title}\n{text}"; variables {title} {text} {bigText} {app} {package} {time}
+       | { type: "ignore" }                         // drop silently (use with stopAfter to exclude things like OTP or promos)
+       | { type: "httpRequest", url, method, headers, body }   // advanced, OFF by default behind a warning; never carries the Wallet token
+```
+*Evaluation rules (these are the bug-prone part, test them as pure unit tests with no Android classes):*
+1. Rules run in list order; for each enabled rule: trigger apps match, then all constraints match, then run its actions
+   in order. If `stopAfter` is true, stop evaluating further rules for this notification.
+2. If **no** rule fires, the notification is dropped (default deny). Nothing is stored for dropped notifications.
+3. `sendToWallet` builds the JSON body of `POST /api/ingest` (`title`, `text`, `package`, `received_at`, `source:"push"`)
+   from the *template*; the default template must reproduce the notification title and text unchanged (the server
+   needs the title). It writes to the queue, never directly to the network.
+4. Regex uses a safe engine with a time limit; an invalid regex disables that rule and shows an error on it (never crashes).
+5. One-time-password-looking notifications are *not* filtered in the app (the server already discards them), but the
+   user may add an `ignore` rule.
+6. Deduplicate on the device: the same (package, title, text, post time) is queued once even if Android posts it twice.
+
+**2b, Screens (native Material 3, opened from a menu item in the web app via the Capacitor bridge).**
+- **Macros list**: name, on/off switch, short summary ("Notification from ABB, Kapital Bank → Send to Wallet"), add,
+  duplicate, delete, reorder. A first-run template "Forward bank notifications" that the user fills in with apps.
+- **Editor with three blocks, like MacroDroid:** *Trigger* (app picker), *Constraints* (add/remove, field, operator,
+  value, ignore-case switch), *Actions* (add/remove/reorder, template editor with variable chips and a live preview).
+- **App picker**: searchable list of installed apps (icon, name, package), multi-select, "any app" option with a warning,
+  a "recently posted notifications" shortcut that lists apps that notified in the last hour so the user can tap one
+  (requires the listener to be connected).
+- **Test panel**: shows the last 20 notifications seen from the selected apps (title/text kept **in memory only** for
+  this screen, wiped when it closes) and, per notification, which rules fire and what the body would be. This is how the
+  user debugs a rule; it never reaches the network.
+- **Status screen** (onboarding): permission steps with deep links (notification access, battery exemption), "last
+  notification received", "last upload", queue size, last error, a "Send test message" button (posts a clearly labelled
+  test text to `/api/ingest` and shows the server's reply), and a "re-pair" button.
+
+**2c, Optional: SMS trigger.** Banks also send SMS. A second trigger type `sms` (sender number/text conditions) using
+`RECEIVE_SMS`; the app is installed from GitHub (not Google Play), so the permission is allowed. Same actions, same queue,
+`source:"sms"`. Do it only if the owner asks.
+
+- **Accept, 2a (all required):**
+  1. With a rule that forwards package `com.android.shell` (debug build only), post `adb shell cmd notification post -S bigtext -t '💸 Ödəniş: -5.86₼' abbtest 'Ödəniş: 5.86 AZN\nObyekt: TEST CAFE\nKart: *1234\nTarix: 03.11.2026 15:10'` → a transaction appears in the web app within 10 s.
   2. Airplane mode on, post three different notifications, turn the network on → exactly three transactions appear, no duplicates.
-  3. Kill the app (swipe away) and post one → it arrives. Reboot the phone and post one → it arrives.
-  4. Post the same notification twice → one transaction (second answer is `duplicate`, queue empties).
-  5. A one-time-password notification and a notification from a non-allowed package → nothing is stored, nothing is sent.
+  3. Swipe the app away and post one → it arrives. Reboot the phone and post one → it arrives.
+  4. Post the same notification twice → one queued item; a repeat that does reach the server answers `duplicate`.
+  5. A notification from an app no rule selects → nothing stored, nothing sent, nothing logged.
   6. Revoke the token in the web app → the app shows "needs re-pairing", keeps the queue, re-pairing delivers it.
   7. Notification access turned off → banner with a button that opens the right settings screen.
-  8. Real device, real ABB notification, one real purchase end-to-end.
+  8. Rule engine unit tests (pure Kotlin/JVM, no emulator): ordering, `stopAfter`, empty `apps` = any app, every operator,
+     case sensitivity, invalid regex, the default template, every variable, and 20+ real-shape samples from section 7.
+- **Accept, 2b:** create, edit, disable and delete a macro; the picker finds an app by name and by package; a macro with
+  an `ignore` rule placed above a `sendToWallet` rule blocks promos but lets purchases through; editing a macro changes
+  behaviour on the next notification without restarting the app; the Test panel shows exactly what would be sent;
+  rotating the phone or leaving the screen never loses unsaved edits (or asks before discarding).
+- **Accept, 2c (if built):** an SMS from a chosen sender arrives as a transaction; SMS permission denied → clear message.
+- **Finally, on the owner's phone:** two **different** real apps (ABB and one other bank or wallet app) each produce one
+  real purchase end-to-end.
+
+### How the owner will use it (this is the behaviour the screens in Phase 2b must deliver)
+
+**One-time setup (about two minutes):**
+1. Open the app, sign in (password or Google), open **Settings → Phone connection** in the website part. Press
+   **Pair this phone**: the website creates a connection token and hands it to the native layer (the user never types or
+   copies it). The status screen shows "Paired".
+2. Open **Wallet listener** (menu entry that opens the native screens). The status screen walks through three
+   green ticks: **Notification access** (button opens Android's settings page; the user switches Wallet on),
+   **Battery: unrestricted** (button opens the battery page), **Connected** (the app confirms the listener is bound).
+3. Press **Send test message**: a clearly marked test goes to the server and the screen shows the server's answer.
+
+**Building a macro (same mental model as MacroDroid):**
+1. **Macros → +** → name it, for example "ABB purchases".
+2. **Trigger: Notification posted.** Tap **Select apps**: a searchable list of installed apps appears; tick ABB (and any
+   other bank or wallet app: Kapital, Birbank, PASHA, Revolut, PayPal, an Amex app…). Shortcut: "Recently notified apps"
+   lists apps that posted in the last hour so a tap picks them. "Any app" exists but warns.
+3. **Constraints (optional, all must match):** for example *Title contains "Ödəniş"*, *Text does not contain "kampaniya"*,
+   or a regex. Used to skip promos and chat messages.
+4. **Actions:** **Send to Wallet** (default; body template `{title}` newline `{text}`, with variable chips {title}, {text},
+   {bigText}, {app}, {package}, {time} and a live preview) and optionally **Ignore** (stop quietly). Several macros can
+   exist, for example one that sends ABB purchases and a higher one that ignores ABB promos and stops.
+5. Save, switch on. The macro works immediately. The **Test panel** shows the last notifications from the chosen apps and
+   which macros would fire for each, so a wrong condition is found in seconds.
+
+**What happens to a notification (ingestion, step by step):**
+1. Android delivers every notification to Wallet's `NotificationListenerService` (the user allowed that in step 2 above).
+   Nothing leaves memory yet.
+2. The **rule engine** checks the notification against the enabled macros in order: app matches, constraints match, then
+   the actions run. No macro fires = the notification is **dropped on the spot** (never stored, never sent, never logged).
+3. `Send to Wallet` renders the body from the template and writes `{title, text, package, received_at, source:"push"}` into
+   the **encrypted local queue** (this write is the point of no return: from here the transaction cannot be lost).
+4. **WorkManager** sends queued items to `POST /api/ingest` with the token, one at a time, with retry and backoff when
+   offline. The server answers `parsed` / `duplicate` / `ignored` / `failed`; for any HTTP 200 with `ok:true` the item
+   leaves the queue. A `401` keeps the queue and shows "needs re-pairing".
+5. The **server** parses the text, removes duplicates, matches the card to an account, categorizes the merchant (rules,
+   built-in dictionary, then the person's AI), saves the transaction and updates budgets and balances. The web part of the
+   app shows it immediately; a message the parser cannot read waits in the website's **Inbox** with the reason.
+6. The status screen shows "last received", "last uploaded" and the queue size, so a silently failing setup is visible.
 
 ### Phase 3, Biometric lock
 - `BiometricPrompt` shown on app start and after N minutes in the background **before** the WebView is shown; the web PIN
@@ -298,10 +410,13 @@ file (`config.json` or a Gradle property), never scattered.
 - **Accept:** success, cancel (stays locked, offers retry), too many failures (falls back to the PIN/screen lock), no
   biometrics enrolled (feature quietly off), device without hardware.
 
-### Phase 4, Google sign-in from the app (blocked until the backend piece exists, section 5 trap 1)
-- Custom Tab → Google → `wallet://auth?code=…` → exchange → session token → load the site signed in.
-- **Accept:** a pending user sees the "waiting for approval" message; an approved user signs in; a cancelled flow returns
-  to the login screen; the one-time code works once and expires in minutes.
+### Phase 4, Google sign-in from the app (the server side is ready; follow section 5, trap 1 exactly)
+- PKCE verifier/challenge → Custom Tab → `wallet://auth` intent filter → load `/api/auth/app-open` in the WebView.
+- **Accept:** a pending user sees the "waiting for approval" message; an approved user ends up signed in inside the
+  WebView; a person with two-step verification is asked for the code; a cancelled flow returns to the login screen with a
+  message; the one-time link works once and expires in minutes; opening the `wallet://auth?code=…` link from another app
+  or with a wrong verifier does **not** sign anyone in; the Custom Tab is closed after returning; killing the app during
+  the flow leaves it in a clean state.
 
 ### Phase 5, Release
 - Signed release APK/AAB built by GitHub Actions in the new repository (keystore in GitHub secrets, **a backup copy of
@@ -349,7 +464,9 @@ differ); screen sizes small/large/tablet; system languages English and Azerbaija
 a phone with USB debugging for testing; a Google account for a signing key (Phase 5); decide the `appId`.
 **Keep safe:** the Android signing keystore and its passwords (losing them means users cannot update the app); the
 `APP_PASSWORD`; the Cloudflare token.
-**For friends who sign in with Google (Phase 4):** build the backend hand-off in the web repository first (section 5).
+**For friends who sign in with Google (Phase 4):** the server side is built and tested. In Google Cloud no extra client is
+needed: the existing web client is used because the Custom Tab goes through the website's own
+`/api/auth/google/callback`.
 **Costs:** the app itself is free; Cloudflare free plan; AI is paid by each person to their own provider (Gemini has a
 free tier).
 

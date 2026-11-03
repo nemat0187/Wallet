@@ -167,6 +167,14 @@ try {
   check("code plus verifier gives a session token (no cookie)", ex.status === 200 && exData.ok === true && Boolean(exData.token) && !named(ex, "wallet_session"), JSON.stringify(exData));
   check("the token signs in as that person", (await (await fetch(`${BASE}/api/bootstrap`, { headers: { authorization: `Bearer ${exData.token}` } })).json()).user?.email === email);
   check("the code works only once", (await exchange(code2, p2.verifier)).status === 400);
+  // The WebView variant: same exchange, but the answer is a cookie sign-in followed by a redirect to the website.
+  const p4 = pkce();
+  const code4 = new URL((await googleSignIn(claims, { challenge: p4.challenge })).location.replace("wallet://", "https://x/")).searchParams.get("code");
+  const open = await fetch(`${BASE}/api/auth/app-open?code=${code4}&verifier=${p4.verifier}`, nohtml);
+  const webCookie = named(open, "wallet_session");
+  check("app-open signs the WebView in with a cookie and redirects to the site", open.status === 302 && open.headers.get("location") === "/" && Boolean(webCookie), `${open.status} ${open.headers.get("location")}`);
+  check("that cookie is a working session", (await (await fetch(`${BASE}/api/bootstrap`, { headers: { cookie: webCookie } })).json()).user?.email === email);
+  check("app-open works only once and a bad one goes to the error screen", (await fetch(`${BASE}/api/auth/app-open?code=${code4}&verifier=${p4.verifier}`, nohtml)).headers.get("location") === "/?auth=error" && (await fetch(`${BASE}/api/auth/app-open?code=x&verifier=y`, nohtml)).headers.get("location") === "/?auth=error");
   const p3 = pkce();
   const code3 = new URL((await googleSignIn(claims, { challenge: p3.challenge })).location.replace("wallet://", "https://x/")).searchParams.get("code");
   sql(`UPDATE app_codes SET expires_at = '2000-01-01T00:00:00.000Z'`);
