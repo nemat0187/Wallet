@@ -18,6 +18,8 @@ export interface Account {
   color: string | null;
   balance: number | null;
   balance_at: string | null;
+  /** The balance in AZN at the latest exchange rate (only set for accounts in another currency). */
+  balance_base?: number | null;
   include_in_totals: number;
   archived: number;
   sort_order: number;

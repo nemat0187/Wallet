@@ -5,7 +5,7 @@ import { localDate, localHour, periodFor, formatMoney } from "@shared/money";
 import { all, first, nowIso } from "../lib/db";
 import { forUser, rawDb } from "../lib/scoped";
 import { categorizeAllPending } from "./categorize";
-import { fetchCbarRates } from "./fx";
+import { refreshRates } from "./fx";
 import { generateReport } from "./insights";
 import { getSettings } from "./settings";
 import { checkBudgetAlerts } from "./alerts";
@@ -39,7 +39,7 @@ async function runForUser(env: Env, when: Date): Promise<void> {
 
   // 2. Daily: exchange rates, budget alerts, housekeeping.
   try {
-    await fetchCbarRates(env.DB, ymd);
+    await refreshRates(env.DB, ymd);
   } catch (e) {
     console.error("cron: fx", e);
   }

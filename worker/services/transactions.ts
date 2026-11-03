@@ -45,6 +45,21 @@ export async function createContext(env: Env): Promise<CreateContext> {
   return { idx, settings, rules };
 }
 
+/**
+ * An amount entered in some currency, expressed in the account's currency. When they differ the entered amount is
+ * kept as the "original" (shown under the converted amount). Amounts are positive here; the caller applies the sign.
+ */
+export async function inAccountCurrency(
+  db: D1Database,
+  amount: number,
+  currency: string,
+  accountCurrency: string | null,
+  ymd: string,
+): Promise<{ amount: number; currency: string; orig_amount: number | null; orig_currency: string | null }> {
+  if (!accountCurrency || accountCurrency === currency) return { amount, currency, orig_amount: null, orig_currency: null };
+  return { amount: await convert(db, amount, currency, accountCurrency, ymd), currency: accountCurrency, orig_amount: amount, orig_currency: currency };
+}
+
 export interface CreatedTransaction {
   id: number;
   duplicate: boolean;

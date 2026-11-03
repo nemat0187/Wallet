@@ -2,13 +2,13 @@
 // entries ("12.5 taxi") and forwarding bank SMS by hand.
 
 import type { Env } from "../env";
-import { formatMoney, parseAmount, shiftPeriod } from "@shared/money";
+import { formatMoney, localDate, parseAmount, shiftPeriod } from "@shared/money";
 import { randomToken, safeEqual } from "../lib/crypto";
 import { getRawSettings, getSetting, getSettings, setSetting } from "./settings";
 import { forUser, rawDb } from "../lib/scoped";
 import { all, first } from "../lib/db";
 import { ensureSeeded } from "./seed";
-import { createContext, createTransaction } from "./transactions";
+import { createContext, createTransaction, inAccountCurrency } from "./transactions";
 import { ingestMessage } from "./ingest";
 import { categorizePendingWithAI, categoryPath, loadCategories } from "./categorize";
 import { budgetStatus } from "./budgets";
@@ -26,6 +26,17 @@ async function tg(env: Env, method: string, payload: Record<string, unknown>): P
   const data = (await res.json()) as { ok: boolean; result?: unknown; description?: string };
   if (!data.ok) throw new Error(`Telegram ${method}: ${data.description ?? res.status}`);
   return data.result;
+}
+
+const CURRENCY_WORDS = "usd|eur|gbp|rub|try|gel|aed|azn";
+
+/** Pull a leading or trailing currency code out of a quick-add label: "usd taxi" -> {taxi, USD}. */
+export function splitCurrency(raw: string): { label: string; currency: string | null } {
+  const lead = raw.match(new RegExp(`^(${CURRENCY_WORDS})\\b\\s*(.*)$`, "i"));
+  if (lead && lead[2].trim()) return { label: lead[2].trim(), currency: lead[1].toUpperCase() };
+  const trail = raw.match(new RegExp(`^(.*?)\\s+(${CURRENCY_WORDS})$`, "i"));
+  if (trail && trail[1].trim()) return { label: trail[1].trim(), currency: trail[2].toUpperCase() };
+  return { label: raw, currency: null };
 }
 
 export function escapeHtml(s: string): string {
@@ -169,7 +180,9 @@ export async function handleTelegramUpdate(publicEnv: Env, secretHeader: string 
     await reply("I didn't understand. Try <code>12.5 taxi</code> or /help.");
     return;
   }
-  const [amountText, label] = /^[+-]?\d/.test(m[1]) ? [m[1], m[2]] : [m[2], m[1]];
+  const [amountText, rawLabel] = /^[+-]?\d/.test(m[1]) ? [m[1], m[2]] : [m[2], m[1]];
+  // An optional currency word next to the amount: "10 usd taxi", "taxi 10 eur".
+  const { label, currency: currencyWord } = splitCurrency(rawLabel);
   const value = parseAmount(amountText.replace(/^[+-]/, ""));
   if (!value) {
     await reply("That amount doesn't look right.");
@@ -177,14 +190,24 @@ export async function handleTelegramUpdate(publicEnv: Env, secretHeader: string 
   }
   const income = amountText.startsWith("+");
   const ctx = await createContext(env);
-  const cash = await first<{ id: number; name: string }>(env.DB, "SELECT id, name FROM accounts WHERE type = 'cash' AND archived = 0 ORDER BY id LIMIT 1");
+  const cash = await first<{ id: number; name: string; currency: string }>(env.DB, "SELECT id, name, currency FROM accounts WHERE type = 'cash' AND archived = 0 ORDER BY id LIMIT 1");
+  const now = new Date();
+  const entered = await inAccountCurrency(
+    env.DB,
+    value,
+    currencyWord ?? cash?.currency ?? ctx.settings.base_currency,
+    cash?.currency ?? null,
+    localDate(now, ctx.settings.tz_offset_minutes),
+  );
   const created = await createTransaction(
     env,
     {
       account_id: cash?.id ?? null,
-      occurred_at: new Date().toISOString(),
-      amount: income ? value : -value,
-      currency: ctx.settings.base_currency,
+      occurred_at: now.toISOString(),
+      amount: income ? entered.amount : -entered.amount,
+      currency: entered.currency,
+      orig_amount: entered.orig_amount,
+      orig_currency: entered.orig_currency,
       merchant_raw: label.slice(0, 80),
       description: "Added via Telegram",
       source: "telegram",
@@ -195,7 +218,7 @@ export async function handleTelegramUpdate(publicEnv: Env, secretHeader: string 
   );
   const tx = await first<{ category_id: number | null }>(env.DB, "SELECT category_id FROM transactions WHERE id = ?", created.id);
   await reply(
-    `✅ ${income ? "Income" : "Expense"} <b>${formatMoney(value)}</b> · ${escapeHtml(label)}\n` +
+    `✅ ${income ? "Income" : "Expense"} <b>${formatMoney(value, currencyWord ?? cash?.currency ?? "AZN")}</b> · ${escapeHtml(label)}\n` +
       `Category: ${escapeHtml(tx?.category_id ? categoryPath(ctx.idx, tx.category_id) : "Uncategorized")}${created.needs_ai ? " (AI will refine)" : ""}` +
       `${cash ? ` · ${escapeHtml(cash.name)}` : ""}`,
   );

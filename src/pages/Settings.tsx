@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Copy, KeyRound, Smartphone, Send, CalendarDays, ShieldCheck, Database, Palette, Trash2, LogOut, CheckCircle2, UserRound } from "lucide-react";
+import { Copy, KeyRound, Smartphone, Send, CalendarDays, ShieldCheck, Database, Palette, Trash2, LogOut, CheckCircle2, UserRound, Coins } from "lucide-react";
 import type { Settings as SettingsT } from "@shared/types";
 import { del, get, patch, post } from "../lib/api";
 import { useBootstrap, useRefresh } from "../lib/data";
@@ -29,6 +29,7 @@ export default function SettingsPage() {
       <AiSettings s={s} />
       <TelegramSettings s={s} />
       <PeriodSettings s={s} />
+      <RatesCard />
       <Security />
       <Appearance />
       <DataSection />
@@ -420,6 +421,71 @@ function TelegramSettings({ s }: { s: SettingsT }) {
 
 // ---------------------------------------------------------------------------
 // Budget period & preferences
+
+interface RatesResponse {
+  date: string;
+  rates: { currency: string; rate: number; date: string | null; source: string; approximate: boolean }[];
+  ok?: boolean;
+  error?: string;
+}
+
+const SOURCE_LABEL: Record<string, string> = {
+  cbar: "Central Bank of Azerbaijan",
+  "er-api": "open.er-api.com (market rate)",
+  carried: "last published rate",
+  fallback: "built-in estimate",
+};
+
+function RatesCard() {
+  const qc = useQueryClient();
+  const toast = useToast();
+  const q = useQuery({ queryKey: ["rates"], queryFn: () => get<RatesResponse>("/rates") });
+  const refresh = useMutation({
+    mutationFn: () => post<RatesResponse>("/rates/refresh"),
+    onSuccess: (r) => {
+      qc.setQueryData(["rates"], r);
+      qc.invalidateQueries({ queryKey: ["accounts"] });
+      if (r.ok === false) toast(r.error ?? "Could not refresh", "error");
+      else toast("Rates updated");
+    },
+    onError: (e) => toast(errorText(e), "error"),
+  });
+  const rates = q.data?.rates ?? [];
+  const approximate = rates.some((r) => r.approximate && ["USD", "EUR"].includes(r.currency));
+  return (
+    <Card
+      id="rates"
+      icon={<Coins size={20} />}
+      title="Exchange rates"
+      intro="Spending and balances in other currencies are converted to manats (AZN) at the rate of the day, from the Central Bank of Azerbaijan, with open.er-api.com as a backup. Cards in USD, EUR and so on are set up on the Accounts page."
+    >
+      {q.isLoading ? (
+        <Spinner />
+      ) : (
+        <ul className="divide-y divide-line rounded-2xl border border-line">
+          {rates.map((r) => (
+            <li key={r.currency} className="flex items-center justify-between gap-3 px-4 py-2.5 text-[15px]">
+              <span>
+                1 {r.currency} <span className="text-ink-3">· {r.date ?? "no date"} · {SOURCE_LABEL[r.source] ?? r.source}</span>
+              </span>
+              <span className="num font-medium">{r.rate.toFixed(4)} ₼</span>
+            </li>
+          ))}
+        </ul>
+      )}
+      {approximate && (
+        <p className="mt-3 text-sm text-warn">
+          No real rate is stored yet, so built-in estimates are in use. Press Refresh; if this stays, the rate sources cannot be reached.
+        </p>
+      )}
+      <div className="mt-3">
+        <Button variant="secondary" loading={refresh.isPending} onClick={() => refresh.mutate()}>
+          Refresh rates now
+        </Button>
+      </div>
+    </Card>
+  );
+}
 
 function PeriodSettings({ s }: { s: SettingsT }) {
   const save = useSaveSettings();

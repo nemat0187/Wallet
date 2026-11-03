@@ -9,6 +9,7 @@ import { validateSession } from "./auth/session";
 import { forUser } from "./lib/scoped";
 import { ensureSeeded } from "./services/seed";
 import { runScheduled } from "./services/cron";
+import { configureFx } from "./services/fx";
 import authRoutes from "./routes/auth";
 import ingestRoutes, { publicIngest } from "./routes/ingest";
 import transactionRoutes from "./routes/transactions";
@@ -37,6 +38,7 @@ app.onError((err, c) => {
 
 // Security headers for every API response.
 app.use("/api/*", async (c, next) => {
+  configureFx(c.env);
   await next();
   c.header("Cache-Control", "no-store");
   c.header("X-Content-Type-Options", "nosniff");
@@ -106,6 +108,7 @@ app.all("/api/*", (c) => c.json({ error: "Not found" }, 404));
 export default {
   fetch: app.fetch,
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext) {
+    configureFx(env);
     ctx.waitUntil(runScheduled(env, new Date(controller.scheduledTime)));
   },
 } satisfies ExportedHandler<Env>;

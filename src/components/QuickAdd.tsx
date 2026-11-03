@@ -1,11 +1,16 @@
 import { useState } from "react";
-import { useMutation } from "@tanstack/react-query";
-import { parseAmount, localDate } from "@shared/money";
-import { post } from "../lib/api";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { formatMoney, parseAmount, localDate } from "@shared/money";
+import { get, post } from "../lib/api";
 import { useAccounts, useBootstrap, useCategories, useRefresh } from "../lib/data";
 import { Button, ErrorNote, Label, Segmented, Sheet, useToast } from "../lib/ui";
 import { CategoryPicker } from "./CategoryPicker";
 import { CategoryIcon } from "./Transactions";
+
+const CURRENCIES = ["AZN", "USD", "EUR", "GBP", "RUB", "TRY", "GEL", "AED"];
+interface RatesResponse {
+  rates: { currency: string; rate: number; approximate: boolean }[];
+}
 
 /** Add a cash expense (or any manual transaction). */
 export function QuickAdd({ open, onClose }: { open: boolean; onClose: () => void }) {
@@ -32,6 +37,12 @@ function Form({ onDone }: { onDone: () => void }) {
   const [accountId, setAccountId] = useState<number | null>(cash?.id ?? accounts.active[0]?.id ?? null);
   const [date, setDate] = useState(localDate(new Date(), tz));
   const [note, setNote] = useState("");
+  const [currencyChoice, setCurrencyChoice] = useState<string | null>(null);
+  const account = accounts.active.find((a) => a.id === accountId);
+  const currency = currencyChoice ?? account?.currency ?? "AZN";
+  const rates = useQuery({ queryKey: ["rates"], queryFn: () => get<RatesResponse>("/rates"), staleTime: 300_000, enabled: currency !== "AZN" });
+  const rate = rates.data?.rates.find((r) => r.currency === currency);
+  const entered = parseAmount(amount);
 
   const save = useMutation({
     mutationFn: () => {
@@ -44,6 +55,7 @@ function Form({ onDone }: { onDone: () => void }) {
         date,
         time,
         amount: minor,
+        currency,
         direction,
         merchant: merchant.trim() || null,
         category_id: categoryId,
@@ -83,13 +95,31 @@ function Form({ onDone }: { onDone: () => void }) {
           <input
             inputMode="decimal"
             autoComplete="off"
-            className="field h-16 pr-12 text-3xl font-semibold num"
+            className="field h-16 pr-24 text-3xl font-semibold num"
             placeholder="0.00"
             value={amount}
             onChange={(e) => setAmount(e.target.value)}
           />
-          <span className="absolute right-4 top-1/2 -translate-y-1/2 text-2xl text-ink-3">₼</span>
+          <select
+            className="absolute right-2 top-1/2 h-10 -translate-y-1/2 rounded-lg border border-line bg-surface-2 px-2 text-base font-medium"
+            value={currency}
+            onChange={(e) => setCurrencyChoice(e.target.value)}
+            aria-label="Currency"
+          >
+            {[...new Set([currency, ...CURRENCIES])].map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
         </div>
+        {currency !== "AZN" && entered && rate && (
+          <p className="mt-1.5 text-[13px] text-ink-3">
+            ≈ <span className="num">{formatMoney(Math.round(entered * rate.rate))}</span> at today's rate (1 {currency} = {rate.rate.toFixed(4)} ₼
+            {rate.approximate ? ", approximate" : ""}).
+            {account && account.currency !== currency && ` It will be saved in ${account.currency} for ${account.name}.`}
+          </p>
+        )}
       </label>
       <label className="block">
         <Label>{direction === "out" ? "What was it?" : "From"}</Label>

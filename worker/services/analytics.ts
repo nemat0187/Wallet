@@ -8,6 +8,7 @@ import { all, first } from "../lib/db";
 import { loadCategories, type CategoryIndex } from "./categorize";
 import { budgetStatus, rangeBudgetStatuses, rollUp, spendingByCategory } from "./budgets";
 import { getSettings } from "./settings";
+import { withBaseBalances } from "./fx";
 import { sqlOffset } from "./ai";
 
 export const TX_SELECT = `SELECT t.*, m.name AS merchant_name FROM transactions t LEFT JOIN merchants m ON m.id = t.merchant_id`;
@@ -91,7 +92,7 @@ export async function dashboard(env: Env, anchor?: string) {
       period.end,
     ),
     all<Transaction>(db, `${TX_SELECT} ORDER BY t.occurred_at DESC, t.id DESC LIMIT 8`),
-    all<Account>(db, "SELECT * FROM accounts WHERE archived = 0 ORDER BY sort_order, id"),
+    all<Account>(db, "SELECT * FROM accounts WHERE archived = 0 ORDER BY sort_order, id").then((rows) => withBaseBalances(db, rows, now)),
     budgetStatus(db, idx, settings, period, now),
     rangeBudgetStatuses(db, idx, now),
     first<{ review: number; failed: number; uncategorized: number }>(

@@ -3,6 +3,9 @@ import { z } from "zod";
 import type { AppEnv } from "../env";
 import type { Account } from "@shared/types";
 import { badRequest, body, intParam, notFound } from "../lib/http";
+import { withBaseBalances } from "../services/fx";
+import { today } from "../services/analytics";
+import { getSettings } from "../services/settings";
 import { all, first, insert, nowIso, run, type SqlValue } from "../lib/db";
 
 const app = new Hono<AppEnv>();
@@ -14,7 +17,7 @@ app.get("/", async (c) => {
             (SELECT MAX(occurred_at) FROM transactions t WHERE t.account_id = a.id) AS last_tx
        FROM accounts a ORDER BY a.archived, a.sort_order, a.id`,
   );
-  return c.json(rows);
+  return c.json(await withBaseBalances(c.env.DB, rows, today(await getSettings(c.env))));
 });
 
 const AccountInput = z.object({

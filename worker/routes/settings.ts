@@ -10,7 +10,8 @@ import { rawDb, userIdOf } from "../lib/scoped";
 import { mfaStatus } from "../auth/mfa";
 import { disconnectTelegram, handleTelegramUpdate, notifyOwner, startTelegramLink } from "../services/telegram";
 import { categoryPath, loadCategories } from "../services/categorize";
-import { TX_SELECT } from "../services/analytics";
+import { TX_SELECT, today } from "../services/analytics";
+import { rateInfo, refreshRates } from "../services/fx";
 
 // Public: Telegram calls this (verified with the secret token header).
 export const telegramWebhook = new Hono<AppEnv>();
@@ -152,6 +153,26 @@ app.post("/data/reset", async (c) => {
   );
   await c.env.DB.prepare("UPDATE accounts SET balance = NULL, balance_at = NULL").run();
   return c.json({ ok: true });
+});
+
+/** Today's exchange rates (AZN per unit) for the currencies the person uses, and where each came from. */
+async function ratesNow(c: { env: AppEnv["Bindings"] }) {
+  const now = today(await getSettings(c.env));
+  const used = await all<{ currency: string }>(c.env.DB, "SELECT DISTINCT currency FROM accounts WHERE archived = 0");
+  return { date: now, rates: await rateInfo(c.env.DB, now, [...used.map((u) => u.currency), "USD", "EUR", "GBP", "RUB", "TRY", "GEL", "AED"]) };
+}
+
+app.get("/rates", async (c) => c.json(await ratesNow(c)));
+
+/** Fetch today's rates again right now (rates are shared by everyone). */
+app.post("/rates/refresh", async (c) => {
+  const now = today(await getSettings(c.env));
+  try {
+    const { source } = await refreshRates(c.env.DB, now);
+    return c.json({ ok: true, source, ...(await ratesNow(c)) });
+  } catch (e) {
+    return c.json({ ok: false, error: `Could not reach a rate source (${e instanceof Error ? e.message : "unknown error"}). The last known rates stay in use.`, ...(await ratesNow(c)) });
+  }
 });
 
 export default app;

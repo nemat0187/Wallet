@@ -65,8 +65,8 @@ export default function Dashboard() {
   const deltaPct = d.prev_same_point.spent > 0 ? Math.round(((d.totals.spent - d.prev_same_point.spent) / d.prev_same_point.spent) * 100) : null;
   const remainingDays = d.period.is_current ? daysBetween(today, d.period.end) + 1 : 0;
   const noData = (boot.data?.counts.transactions ?? 0) === 0;
-  const counted = d.accounts.filter((a) => a.include_in_totals && a.currency === "AZN" && a.balance !== null);
-  const totalBalance = counted.length > 1 ? counted.reduce((sum, a) => sum + (a.balance ?? 0), 0) : null;
+  const counted = d.accounts.filter((a) => a.include_in_totals && a.balance !== null);
+  const totalBalance = counted.length > 1 ? counted.reduce((sum, a) => sum + (a.balance_base ?? a.balance ?? 0), 0) : null;
 
   const blocks: Record<HomeBlockId, React.ReactNode> = {
     hero: (
@@ -210,6 +210,7 @@ export default function Dashboard() {
                 {a.name}
               </span>
               <span className="mt-1 block text-lg font-semibold num">{a.balance !== null ? formatMoney(a.balance, a.currency) : "—"}</span>
+              {a.balance_base != null && <span className="block text-[12px] text-ink-3 num">≈ {formatMoney(a.balance_base)}</span>}
               {a.balance_at && <span className="block text-[12px] text-ink-3">as of {a.balance_at.slice(0, 10)}</span>}
             </Link>
           ))}

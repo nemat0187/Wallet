@@ -15,7 +15,7 @@ export default function Accounts() {
   const q = useQuery({ queryKey: ["accounts-full"], queryFn: () => get<Row[]>("/accounts") });
   const [editing, setEditing] = useState<Partial<Row> | null>(null);
   if (!q.data) return <Spinner />;
-  const total = q.data.filter((a) => !a.archived && a.include_in_totals && a.currency === "AZN").reduce((s, a) => s + (a.balance ?? 0), 0);
+  const total = q.data.filter((a) => !a.archived && a.include_in_totals).reduce((s, a) => s + (a.balance_base ?? a.balance ?? 0), 0);
 
   return (
     <div>
@@ -50,6 +50,7 @@ export default function Accounts() {
                   </span>
                   <span className="text-right">
                     <span className="num block font-semibold">{a.balance !== null ? formatMoney(a.balance, a.currency) : "—"}</span>
+                    {a.balance_base != null && <span className="num block text-[12px] text-ink-3">≈ {formatMoney(a.balance_base)}</span>}
                     {a.balance_at && <span className="block text-[12px] text-ink-3">{a.balance_at.slice(0, 10)}</span>}
                   </span>
                   <ChevronRight size={16} className="text-ink-3" aria-hidden />

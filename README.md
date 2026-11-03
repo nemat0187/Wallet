@@ -52,6 +52,9 @@ It runs for free on your own Cloudflare account and only you can open it.
   a PIN on every device and a list of signed-in devices keep accounts safe.
 - **Savings goals** (Budgets page) track a target, what you have put aside and how much to
   save each month to finish on time. Dashboard widgets can use **Today**, **Yesterday** and **This week**.
+- **Other currencies.** Add a USD/EUR/... card and spend in any currency: everything is converted to manats at the
+  day's rate (Central Bank of Azerbaijan, with open.er-api.com as a backup) for budgets, totals and statistics, and
+  the original amount stays visible. Settings → Exchange rates shows the rates in use.
 - **Also:** cash expenses with one tap (or by Telegram: `12.5 taxi`), PDF/CSV statement import with duplicate
   detection, select many transactions to recategorize / tag as transfers / hide / delete at once, CSV/JSON export,
   dark mode, installable on your phone.

@@ -10,6 +10,7 @@ import {
   createContext,
   createTransaction,
   deleteTransactions,
+  inAccountCurrency,
   loadBalanceAccounts,
   scanTransferPairs,
   type BalanceRow,
@@ -166,13 +167,16 @@ app.post("/", async (c) => {
   const account = input.account_id
     ? await first<{ currency: string }>(c.env.DB, "SELECT currency FROM accounts WHERE id = ?", input.account_id)
     : null;
+  const entered = await inAccountCurrency(c.env.DB, input.amount, (input.currency ?? account?.currency ?? ctx.settings.base_currency).toUpperCase(), account?.currency ?? null, input.date);
   const created = await createTransaction(
     c.env,
     {
       account_id: input.account_id,
       occurred_at: occurred.toISOString(),
-      amount: input.direction === "in" ? input.amount : -input.amount,
-      currency: input.currency ?? account?.currency ?? ctx.settings.base_currency,
+      amount: input.direction === "in" ? entered.amount : -entered.amount,
+      currency: entered.currency,
+      orig_amount: entered.orig_amount,
+      orig_currency: entered.orig_currency,
       merchant_raw: input.merchant ?? null,
       note: input.note ?? null,
       tags: input.tags ?? null,
