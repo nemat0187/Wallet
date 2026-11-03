@@ -11,9 +11,15 @@ export interface Env {
   ANTHROPIC_API_KEY?: string;
   /** Optional: route Claude requests through a gateway (e.g. Cloudflare AI Gateway). */
   ANTHROPIC_BASE_URL?: string;
+  /** Optional: enables "Continue with Google" (Google Cloud OAuth client). */
+  GOOGLE_CLIENT_ID?: string;
+  GOOGLE_CLIENT_SECRET?: string;
+  /** Testing only: point the Google flow at a local mock. */
+  GOOGLE_AUTH_URL?: string;
+  GOOGLE_TOKEN_URL?: string;
   /** Optional Telegram bot token for notifications and quick-add. */
   TELEGRAM_BOT_TOKEN?: string;
 }
 
-export type AppEnv = { Bindings: Env; Variables: { sessionHash: string; userId: number } };
+export type AppEnv = { Bindings: Env; Variables: { sessionHash: string; userId: number; role: "admin" | "user" } };
 export type App = Hono<AppEnv>;

@@ -51,8 +51,8 @@ function bool(v: unknown): string | null {
   return typeof v === "boolean" ? (v ? "1" : "0") : null;
 }
 
-/** Settings that belong to the installation, not to a user (the Telegram bot has one webhook secret). */
-const GLOBAL_KEYS = new Set(["telegram_webhook_secret"]);
+/** Settings that belong to the installation, not to a user (the Telegram bot has one webhook secret; whether new sign-up requests are accepted). */
+const GLOBAL_KEYS = new Set(["telegram_webhook_secret", "registration_open"]);
 
 function owner(db: D1Database): { raw: D1Database; userId: number } {
   return { raw: db instanceof ScopedD1 ? db.raw : db, userId: userIdOfDb(db) };

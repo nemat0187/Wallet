@@ -1,12 +1,10 @@
-// Brute-force protection for the login form: per-IP lockout plus a global
-// lockout that also stops attackers rotating IP addresses.
+// Brute-force protection for the login form: per-IP lockout. (There used to be a global lockout too, but one
+// attacker could then lock every user out; accounts are protected by MFA instead.)
 
 import { first, run } from "../lib/db";
 
 const IP_MAX_FAILURES = 5;
 const IP_LOCK_MINUTES = 15;
-const GLOBAL_MAX_FAILURES = 30;
-const GLOBAL_LOCK_MINUTES = 30;
 const WINDOW_MINUTES = 60;
 
 interface AttemptRow {
@@ -18,19 +16,22 @@ interface AttemptRow {
 /** Returns the number of seconds until the login is unlocked, or 0 if allowed. */
 export async function lockedFor(db: D1Database, ip: string): Promise<number> {
   const now = Date.now();
-  let wait = 0;
-  for (const key of [`ip:${ip}`, "global"]) {
-    const row = await first<AttemptRow>(db, "SELECT * FROM login_attempts WHERE key = ?", key);
-    if (row?.locked_until && Date.parse(row.locked_until) > now) {
-      wait = Math.max(wait, Math.ceil((Date.parse(row.locked_until) - now) / 1000));
-    }
-  }
-  return wait;
+  return lockedKey(db, `ip:${ip}`, now);
+}
+
+/** Seconds until a keyed limit is lifted, or 0. */
+export async function lockedKey(db: D1Database, key: string, now = Date.now()): Promise<number> {
+  const row = await first<AttemptRow>(db, "SELECT * FROM login_attempts WHERE key = ?", key);
+  return row?.locked_until && Date.parse(row.locked_until) > now ? Math.ceil((Date.parse(row.locked_until) - now) / 1000) : 0;
+}
+
+/** Count one sign-up request from this address; 5 per hour, then blocked for an hour. */
+export async function recordSignupRequest(db: D1Database, ip: string): Promise<void> {
+  await bump(db, `signup:${ip}`, 5, 60);
 }
 
 export async function recordFailure(db: D1Database, ip: string): Promise<void> {
   await bump(db, `ip:${ip}`, IP_MAX_FAILURES, IP_LOCK_MINUTES);
-  await bump(db, "global", GLOBAL_MAX_FAILURES, GLOBAL_LOCK_MINUTES);
 }
 
 export async function resetFailures(db: D1Database, ip: string): Promise<void> {

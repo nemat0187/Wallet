@@ -15,7 +15,8 @@
     "db:migrate:local": "wrangler d1 migrations apply DB --local",
     "db:seed:demo": "node scripts/seed-demo.mjs",
     "deploy": "node scripts/deploy.mjs",
-    "check:isolation": "node scripts/isolation-check.mjs"
+    "check:isolation": "node scripts/isolation-check.mjs",
+    "check:auth": "node scripts/auth-check.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.3.0",

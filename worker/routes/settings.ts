@@ -38,7 +38,10 @@ app.get("/bootstrap", async (c) => {
               (SELECT COUNT(*) FROM transactions) AS transactions`,
     ),
   ]);
-  return c.json({ settings, categories, accounts, counts, origin: new URL(c.req.url).origin });
+  const db = rawDb(c.env);
+  const me = await first<{ id: number; email: string | null; name: string; role: string }>(db, "SELECT id, email, name, role FROM users WHERE id = ?", userIdOf(c.env));
+  const pending = c.get("role") === "admin" ? ((await first<{ n: number }>(db, "SELECT COUNT(*) AS n FROM users WHERE status = 'pending'"))?.n ?? 0) : 0;
+  return c.json({ settings, categories, accounts, counts: { ...counts, pending_users: pending }, user: me, origin: new URL(c.req.url).origin });
 });
 
 app.get("/settings", async (c) => c.json(await getSettings(c.env)));

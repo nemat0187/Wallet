@@ -46,6 +46,12 @@ export async function notifyOwner(env: Env, html: string): Promise<boolean> {
   }
 }
 
+/** Tell every active admin who linked Telegram (used for new sign-up requests). */
+export async function notifyAdmins(env: Env, html: string): Promise<void> {
+  const admins = await all<{ id: number }>(rawDb(env), "SELECT id FROM users WHERE role = 'admin' AND status = 'active'");
+  for (const a of admins) await notifyOwner(forUser(env, a.id), html).catch(() => false);
+}
+
 /**
  * Registers the (single, shared) bot webhook once and returns a one-time link the user opens to link their chat.
  * `env` is the signed-in user's Env.

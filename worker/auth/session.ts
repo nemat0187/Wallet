@@ -38,14 +38,14 @@ export async function createSession(c: Context<AppEnv>, userId: number): Promise
 }
 
 /** The session (and its user) if the request carries a valid one and the user is active, else null. */
-export async function validateSession(c: Context<AppEnv>): Promise<{ hash: string; userId: number } | null> {
+export async function validateSession(c: Context<AppEnv>): Promise<{ hash: string; userId: number; role: "admin" | "user" } | null> {
   const db = rawDb(c.env);
   const token = getCookie(c, SESSION_COOKIE);
   if (!token) return null;
   const hash = await sha256Hex(token);
-  const row = await first<{ expires_at: string; last_seen_at: string; user_id: number }>(
+  const row = await first<{ expires_at: string; last_seen_at: string; user_id: number; role: "admin" | "user" }>(
     db,
-    `SELECT s.expires_at, s.last_seen_at, s.user_id FROM sessions s JOIN users u ON u.id = s.user_id
+    `SELECT s.expires_at, s.last_seen_at, s.user_id, u.role FROM sessions s JOIN users u ON u.id = s.user_id
       WHERE s.token_hash = ? AND u.status = 'active'`,
     hash,
   );
@@ -73,7 +73,7 @@ export async function validateSession(c: Context<AppEnv>): Promise<{ hash: strin
       expires,
     });
   }
-  return { hash, userId: row.user_id };
+  return { hash, userId: row.user_id, role: row.role };
 }
 
 export async function destroySession(c: Context<AppEnv>): Promise<void> {

@@ -21,6 +21,7 @@ import importRoutes from "./routes/imports";
 import settingsRoutes, { telegramWebhook } from "./routes/settings";
 import dashboardRoutes from "./routes/dashboards";
 import noteRoutes from "./routes/notes";
+import adminRoutes from "./routes/admin";
 
 const app = new Hono<AppEnv>();
 
@@ -56,6 +57,7 @@ app.use("/api/*", async (c, next) => {
   }
   c.set("sessionHash", session.hash);
   c.set("userId", session.userId);
+  c.set("role", session.role);
   // From here on every route sees only this user's rows (worker/lib/scoped.ts).
   c.env = forUser(c.env, session.userId);
   await ensureSeeded(c.env.DB);
@@ -70,6 +72,7 @@ app.route("/api/budgets", budgetRoutes);
 app.route("/api/analytics", analyticsRoutes);
 app.route("/api/dashboards", dashboardRoutes);
 app.route("/api/notes", noteRoutes);
+app.route("/api/admin", adminRoutes);
 app.route("/api/ai", aiRoutes);
 app.route("/api/import", importRoutes);
 app.route("/api", settingsRoutes);

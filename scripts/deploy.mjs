@@ -7,7 +7,7 @@
 // 4. Stores secrets (password, API keys) in Cloudflare.
 //
 // Needs: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, APP_PASSWORD
-// Optional: ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN, ANTHROPIC_BASE_URL
+// Optional: ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN, ANTHROPIC_BASE_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
 
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -83,7 +83,7 @@ try {
 
   // --- 4. Secrets --------------------------------------------------------------
   const secrets = {};
-  for (const key of ["APP_PASSWORD", "ANTHROPIC_API_KEY", "TELEGRAM_BOT_TOKEN", "ANTHROPIC_BASE_URL"]) {
+  for (const key of ["APP_PASSWORD", "ANTHROPIC_API_KEY", "TELEGRAM_BOT_TOKEN", "ANTHROPIC_BASE_URL", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"]) {
     if (process.env[key]) secrets[key] = process.env[key];
   }
   writeFileSync(SECRETS_FILE, JSON.stringify(secrets), { mode: 0o600 });
@@ -97,6 +97,7 @@ try {
     "✅ Password login",
     process.env.ANTHROPIC_API_KEY ? "✅ AI (Claude)" : "➖ AI — add ANTHROPIC_API_KEY to enable",
     process.env.TELEGRAM_BOT_TOKEN ? "✅ Telegram bot" : "➖ Telegram — optional, add TELEGRAM_BOT_TOKEN",
+    process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET ? "✅ Sign in with Google" : "➖ Google sign-in — optional, add GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET",
   ];
   console.log(`\n🎉 Deployed${url ? `: ${url}` : ""}\n${enabled.join("\n")}`);
   summary(
