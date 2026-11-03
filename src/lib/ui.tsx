@@ -211,23 +211,36 @@ export function Sheet({
   wide?: boolean;
 }) {
   const ref = useRef<HTMLDivElement>(null);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  // Callers often pass a fresh onClose every render. Read it through a ref so the effect below only runs when the
+  // sheet opens or closes; otherwise every keystroke in a form would re-run it and move the focus away.
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
   useEffect(() => {
     if (!open) return;
     const prev = document.activeElement as HTMLElement | null;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && onCloseRef.current();
     document.addEventListener("keydown", onKey);
     document.body.style.overflow = "hidden";
-    setTimeout(() => ref.current?.querySelector<HTMLElement>("input, select, textarea, button")?.focus(), 30);
+    // Start in the first form field (not the close button); fall back to any button.
+    const timer = setTimeout(() => {
+      const target =
+        bodyRef.current?.querySelector<HTMLElement>("[autofocus], input:not([type=hidden]), select, textarea") ??
+        bodyRef.current?.querySelector<HTMLElement>("button") ??
+        ref.current?.querySelector<HTMLElement>("button");
+      target?.focus();
+    }, 30);
     return () => {
+      clearTimeout(timer);
       document.removeEventListener("keydown", onKey);
       document.body.style.overflow = "";
       prev?.focus?.();
     };
-  }, [open, onClose]);
+  }, [open]);
   if (!open) return null;
   return createPortal(
     <div className="fixed inset-0 z-50 flex items-end justify-center sm:items-center sm:p-6">
-      <div className="fade-in absolute inset-0 bg-black/40" onClick={onClose} aria-hidden />
+      <div className="fade-in absolute inset-0 bg-black/40" onClick={() => onCloseRef.current()} aria-hidden />
       <div
         ref={ref}
         role="dialog"
@@ -243,7 +256,7 @@ export function Sheet({
             <X size={20} />
           </button>
         </div>
-        <div className="overflow-y-auto px-5 pb-5">{children}</div>
+        <div ref={bodyRef} className="overflow-y-auto px-5 pb-5">{children}</div>
         {footer && <div className="pb-safe border-t border-line px-5 py-3">{footer}</div>}
       </div>
     </div>,
