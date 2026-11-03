@@ -276,3 +276,16 @@ an email code before the login page even loads:
 | Error `exceeded resource limits` (rare, with huge imports) | Import a smaller file, or upgrade Cloudflare Workers to the $5/month plan. |
 
 Changing your password: update the `APP_PASSWORD` secret in GitHub and run Deploy again.
+
+## Wrapping the app in a phone app (optional)
+
+Two ways, pick one:
+
+1. **Load your live address inside the app shell** (a WebView pointing at `https://wallet.<you>.workers.dev`).
+   Nothing to configure: sign-in, the PIN and Google sign-in work exactly as in the browser.
+2. **Bundle the web app inside the shell** (files stored in the app). Because the page then runs from another
+   origin, build it with `VITE_API_BASE=https://wallet.<you>.workers.dev npm run build` and add a GitHub secret
+   `APP_ORIGINS` listing the shell's origin(s), comma-separated (for Capacitor/Android usually
+   `https://localhost,capacitor://localhost`), then run Deploy again. In this mode the app signs in with the owner
+   password (and a two-step code if enabled) and keeps a session token instead of a cookie; "Continue with Google"
+   needs the live address (way 1).

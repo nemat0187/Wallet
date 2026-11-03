@@ -15,7 +15,21 @@ export const SESSION_COOKIE = "wallet_session";
 const SESSION_DAYS = 30;
 const REFRESH_AFTER_MS = 24 * 3600 * 1000;
 
-export async function createSession(c: Context<AppEnv>, userId: number): Promise<void> {
+/** Phone/desktop shells that cannot use cookies send this header and get the session token back in the JSON instead. */
+export function isAppClient(c: Context<AppEnv>): boolean {
+  return c.req.header("x-client") === "app";
+}
+
+/** The token of the signed-in session: from the cookie (browser) or from "Authorization: Bearer" (app shell). */
+function sessionToken(c: Context<AppEnv>): { token: string; bearer: boolean } | null {
+  const cookie = getCookie(c, SESSION_COOKIE);
+  if (cookie) return { token: cookie, bearer: false };
+  const m = c.req.header("authorization")?.match(/^Bearer\s+([A-Za-z0-9_-]{20,200})$/);
+  return m ? { token: m[1], bearer: true } : null;
+}
+
+/** Creates a session. Browsers get a cookie; app clients (x-client: app) get the token back and no cookie. */
+export async function createSession(c: Context<AppEnv>, userId: number): Promise<string | null> {
   const token = randomToken(32);
   const hash = await sha256Hex(token);
   const now = new Date();
@@ -31,14 +45,18 @@ export async function createSession(c: Context<AppEnv>, userId: number): Promise
     (c.req.header("user-agent") ?? "").slice(0, 200),
     clientIp(c),
   );
-  setCookie(c, SESSION_COOKIE, token, {
-    httpOnly: true,
-    secure: new URL(c.req.url).protocol === "https:",
-    sameSite: "Strict",
-    path: "/",
-    expires,
-  });
+  const app = isAppClient(c);
+  if (!app) {
+    setCookie(c, SESSION_COOKIE, token, {
+      httpOnly: true,
+      secure: new URL(c.req.url).protocol === "https:",
+      sameSite: "Strict",
+      path: "/",
+      expires,
+    });
+  }
   c.executionCtx.waitUntil(alertOnNewDevice(c, userId).catch((e) => console.error("new-device alert", e)));
+  return app ? token : null;
 }
 
 /**
@@ -62,10 +80,11 @@ async function alertOnNewDevice(c: Context<AppEnv>, userId: number): Promise<voi
 }
 
 /** The session (and its user) if the request carries a valid one and the user is active, else null. */
-export async function validateSession(c: Context<AppEnv>): Promise<{ hash: string; userId: number; role: "admin" | "user" } | null> {
+export async function validateSession(c: Context<AppEnv>): Promise<{ hash: string; userId: number; role: "admin" | "user"; bearer: boolean } | null> {
   const db = rawDb(c.env);
-  const token = getCookie(c, SESSION_COOKIE);
-  if (!token) return null;
+  const found = sessionToken(c);
+  if (!found) return null;
+  const { token, bearer } = found;
   const hash = await sha256Hex(token);
   const row = await first<{ expires_at: string; last_seen_at: string; user_id: number; role: "admin" | "user" }>(
     db,
@@ -89,20 +108,22 @@ export async function validateSession(c: Context<AppEnv>): Promise<{ hash: strin
       expires.toISOString(),
       hash,
     );
-    setCookie(c, SESSION_COOKIE, token, {
-      httpOnly: true,
-      secure: new URL(c.req.url).protocol === "https:",
-      sameSite: "Strict",
-      path: "/",
-      expires,
-    });
+    if (!bearer) {
+      setCookie(c, SESSION_COOKIE, token, {
+        httpOnly: true,
+        secure: new URL(c.req.url).protocol === "https:",
+        sameSite: "Strict",
+        path: "/",
+        expires,
+      });
+    }
   }
-  return { hash, userId: row.user_id, role: row.role };
+  return { hash, userId: row.user_id, role: row.role, bearer };
 }
 
 export async function destroySession(c: Context<AppEnv>): Promise<void> {
-  const token = getCookie(c, SESSION_COOKIE);
-  if (token) await run(rawDb(c.env), "DELETE FROM sessions WHERE token_hash = ?", await sha256Hex(token));
+  const found = sessionToken(c);
+  if (found) await run(rawDb(c.env), "DELETE FROM sessions WHERE token_hash = ?", await sha256Hex(found.token));
   deleteCookie(c, SESSION_COOKIE, { path: "/" });
 }
 

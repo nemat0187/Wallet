@@ -7,7 +7,7 @@
 // 4. Stores secrets (password, API keys) in Cloudflare.
 //
 // Needs: CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, APP_PASSWORD
-// Optional: ANTHROPIC_API_KEY (owner-only fallback; people add their own AI keys in the app), TELEGRAM_BOT_TOKEN, ANTHROPIC_BASE_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+// Optional: APP_ORIGINS (origins of a phone app shell allowed to call the API), ANTHROPIC_API_KEY (owner-only fallback; people add their own AI keys in the app), TELEGRAM_BOT_TOKEN, ANTHROPIC_BASE_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
 
 import { execFileSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
@@ -84,7 +84,7 @@ try {
 
   // --- 4. Secrets --------------------------------------------------------------
   const secrets = {};
-  for (const key of ["APP_PASSWORD", "ANTHROPIC_API_KEY", "TELEGRAM_BOT_TOKEN", "ANTHROPIC_BASE_URL", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"]) {
+  for (const key of ["APP_PASSWORD", "ANTHROPIC_API_KEY", "TELEGRAM_BOT_TOKEN", "ANTHROPIC_BASE_URL", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "APP_ORIGINS"]) {
     if (process.env[key]) secrets[key] = process.env[key];
   }
   // The encryption key is created once and never replaced: everything encrypted with it (two-step secrets, later

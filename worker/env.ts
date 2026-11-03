@@ -23,6 +23,8 @@ export interface Env {
   AI_TEST_ANTHROPIC_URL?: string;
   AI_TEST_OPENAI_URL?: string;
   AI_TEST_GEMINI_URL?: string;
+  /** Optional: comma-separated origins of a phone/desktop app shell that may call the API (e.g. "https://localhost,capacitor://localhost"). */
+  APP_ORIGINS?: string;
   /** Optional Telegram bot token for notifications and quick-add. */
   TELEGRAM_BOT_TOKEN?: string;
 }

@@ -4,7 +4,7 @@
 // .dev.vars must contain (local only):
 //   APP_PASSWORD=...  GOOGLE_CLIENT_ID=test-client  GOOGLE_CLIENT_SECRET=x
 //   GOOGLE_AUTH_URL=http://127.0.0.1:8799/auth  GOOGLE_TOKEN_URL=http://127.0.0.1:8799/token
-//   ENCRYPTION_KEY=<32 random bytes, base64>
+//   ENCRYPTION_KEY=<32 random bytes, base64>   APP_ORIGINS=https://app.example.test
 //   npm run dev:api     then     node scripts/auth-check.mjs
 
 import { createServer } from "node:http";
@@ -263,6 +263,40 @@ try {
 
   // 9. The password login still works.
   check("the owner password still works", (await fetch(`${BASE}/api/auth/login`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password }) })).status === 200);
+  // ===== App shell: Bearer sessions and CORS =====
+  const APP = "https://app.example.test";
+  const appHeaders = { "content-type": "application/json", "x-client": "app" };
+  const appLogin = await fetch(`${BASE}/api/auth/login`, { method: "POST", headers: appHeaders, body: JSON.stringify({ password }) });
+  const appData = await appLogin.json();
+  check("an app client gets a token and no cookie", appData.ok === true && /^[A-Za-z0-9_-]{20,}$/.test(appData.token ?? "") && !named(appLogin, "wallet_session"), JSON.stringify(appData));
+  const bearer = (token, extra = {}) => ({ headers: { authorization: `Bearer ${token}`, ...extra } });
+  check("the token signs in requests", (await fetch(`${BASE}/api/bootstrap`, bearer(appData.token))).status === 200);
+  check("a wrong token is refused", (await fetch(`${BASE}/api/bootstrap`, bearer("x".repeat(43)))).status === 401);
+  check("a bearer request from the app's origin may change data", (await fetch(`${BASE}/api/auth/mfa/skip`, { method: "POST", ...bearer(appData.token, { origin: APP, "content-type": "application/json" }), body: "{}" })).status === 200);
+  sql("DELETE FROM user_settings WHERE user_id = 1 AND key = 'mfa_skipped'");
+  check("a cookie request from another origin is still blocked", (await fetch(`${BASE}/api/auth/mfa/skip`, { method: "POST", headers: { cookie: dA.session, origin: "https://evil.example", "content-type": "application/json" }, body: "{}" })).status === 403);
+  const pre = await fetch(`${BASE}/api/bootstrap`, { method: "OPTIONS", headers: { origin: APP, "access-control-request-method": "GET", "access-control-request-headers": "authorization" } });
+  check("preflight from the listed origin is answered", pre.status === 204 && pre.headers.get("access-control-allow-origin") === APP && /authorization/i.test(pre.headers.get("access-control-allow-headers") ?? ""));
+  const preBad = await fetch(`${BASE}/api/bootstrap`, { method: "OPTIONS", headers: { origin: "https://evil.example", "access-control-request-method": "GET" } });
+  check("an unlisted origin gets no CORS permission", !preBad.headers.get("access-control-allow-origin"));
+  const getBad = await fetch(`${BASE}/api/health`, { headers: { origin: "https://evil.example" } });
+  check("no CORS header on a normal response to an unlisted origin", !getBad.headers.get("access-control-allow-origin"));
+  // With two-step on, an app client carries the pending sign-in in the JSON instead of a cookie.
+  const aSetup = await owner("POST", "/auth/mfa/setup");
+  const aConfirm = await owner("POST", "/auth/mfa/confirm", { code: totp(aSetup.data.secret) });
+  const aCodes = aConfirm.data.recovery_codes;
+  const aMfa = await (await fetch(`${BASE}/api/auth/login`, { method: "POST", headers: appHeaders, body: JSON.stringify({ password }) })).json();
+  check("with two-step on an app client gets an mfa_token", aMfa.mfa_required === true && typeof aMfa.mfa_token === "string" && !aMfa.token, JSON.stringify(aMfa));
+  const aVerified = await fetch(`${BASE}/api/auth/mfa/verify`, { method: "POST", headers: appHeaders, body: JSON.stringify({ code: aCodes[0], mfa_token: aMfa.mfa_token }) });
+  const aV = await aVerified.json();
+  check("a recovery code plus the mfa_token gives a token", aV.ok === true && Boolean(aV.token) && !named(aVerified, "wallet_session"), JSON.stringify(aV));
+  check("a browser cannot use mfa_token from the body", (await fetch(`${BASE}/api/auth/mfa/verify`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code: aCodes[1], mfa_token: aMfa.mfa_token }) })).status === 401);
+  check("the new token works", (await fetch(`${BASE}/api/bootstrap`, bearer(aV.token))).status === 200);
+  check("logout with the token ends the session", (await fetch(`${BASE}/api/auth/logout`, { method: "POST", ...bearer(aV.token) })).status === 200 && (await fetch(`${BASE}/api/bootstrap`, bearer(aV.token))).status === 401);
+  await fetch(`${BASE}/api/auth/logout`, { method: "POST", ...bearer(appData.token) });
+  sql("DELETE FROM user_settings WHERE user_id = 1 AND key IN ('mfa_skipped', 'totp_secret', 'totp_pending_secret', 'totp_last_step', 'recovery_codes')");
+  sql("DELETE FROM login_attempts");
+
   await owner("PUT", "/admin/registration", { open: false });
 } finally {
   mock.close();

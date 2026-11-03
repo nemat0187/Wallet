@@ -43,6 +43,24 @@ app.use("/api/*", async (c, next) => {
   c.header("X-Frame-Options", "DENY");
 });
 
+// Cross-origin access for an app shell (bundled web app): only for origins listed in APP_ORIGINS, no cookies involved.
+app.use("/api/*", async (c, next) => {
+  const origin = c.req.header("origin");
+  const allowed = (c.env.APP_ORIGINS ?? "").split(",").map((o) => o.trim()).filter(Boolean);
+  const ok = Boolean(origin && origin !== new URL(c.req.url).origin && allowed.includes(origin));
+  if (ok) {
+    c.header("Access-Control-Allow-Origin", origin!);
+    c.header("Vary", "Origin");
+    if (c.req.method === "OPTIONS") {
+      c.header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS");
+      c.header("Access-Control-Allow-Headers", "authorization, content-type, x-client");
+      c.header("Access-Control-Max-Age", "600");
+      return c.body(null, 204);
+    }
+  }
+  await next();
+});
+
 app.get("/api/health", (c) => c.json({ ok: true }));
 
 // Endpoints that authenticate themselves (phone webhook token, Telegram secret, login form).
@@ -55,8 +73,9 @@ app.use("/api/*", async (c, next) => {
   const session = await validateSession(c);
   if (!session) throw new HTTPException(401, { message: "Please log in" });
   if (c.req.method !== "GET" && c.req.method !== "HEAD") {
+    // Bearer requests carry no cookie, so they cannot be forged by another site; cookie requests must come from this site.
     const origin = c.req.header("origin");
-    if (origin && origin !== new URL(c.req.url).origin) throw new HTTPException(403, { message: "Cross-site request blocked" });
+    if (!session.bearer && origin && origin !== new URL(c.req.url).origin) throw new HTTPException(403, { message: "Cross-site request blocked" });
   }
   c.set("sessionHash", session.hash);
   c.set("userId", session.userId);

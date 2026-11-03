@@ -5,7 +5,7 @@ import type { AppEnv } from "../env";
 import { body } from "../lib/http";
 import { safeEqual } from "../lib/crypto";
 import { all, first, insert, nowIso, run } from "../lib/db";
-import { clientIp, createSession, destroySession, validateSession } from "../auth/session";
+import { clientIp, createSession, destroySession, isAppClient, validateSession } from "../auth/session";
 import { forUser, rawDb } from "../lib/scoped";
 import { OWNER_ID } from "../lib/userkeys";
 import { lockedFor, lockedKey, recordFailure, recordKeyFailure, recordSignupRequest, resetFailures, resetKey } from "../auth/ratelimit";
@@ -51,17 +51,18 @@ async function signIn(c: Context<AppEnv>, userId: number, redirect = false) {
       path: "/api/auth",
       maxAge: 300,
     });
-    return redirect ? c.redirect("/?auth=mfa") : c.json({ ok: false, mfa_required: true });
+    if (redirect) return c.redirect("/?auth=mfa");
+    return c.json({ ok: false, mfa_required: true, ...(isAppClient(c) ? { mfa_token: await signToken(c.env, { u: userId }, 300) } : {}) });
   }
-  await createSession(c, userId);
-  return redirect ? c.redirect("/") : c.json({ ok: true });
+  const token = await createSession(c, userId);
+  return redirect ? c.redirect("/") : c.json({ ok: true, ...(token ? { token } : {}) });
 }
 
 const MFA_COOKIE = "wallet_mfa";
 
 app.post("/mfa/verify", async (c) => {
-  const { code } = await body(c, z.object({ code: z.string().min(6).max(20) }));
-  const pending = await verifyToken<{ u: number }>(c.env, getCookie(c, MFA_COOKIE));
+  const { code, mfa_token } = await body(c, z.object({ code: z.string().min(6).max(20), mfa_token: z.string().max(2000).optional() }));
+  const pending = await verifyToken<{ u: number }>(c.env, getCookie(c, MFA_COOKIE) ?? (isAppClient(c) ? mfa_token : undefined));
   if (!pending) throw new HTTPException(401, { message: "Your sign-in timed out. Please start again." });
   const db = rawDb(c.env);
   const ip = clientIp(c);
@@ -75,8 +76,8 @@ app.post("/mfa/verify", async (c) => {
   }
   await resetKey(db, key);
   deleteCookie(c, MFA_COOKIE, { path: "/api/auth" });
-  await createSession(c, pending.u);
-  return c.json({ ok: true });
+  const token = await createSession(c, pending.u);
+  return c.json({ ok: true, ...(token ? { token } : {}) });
 });
 
 app.post("/logout", async (c) => {
@@ -184,7 +185,7 @@ app.use("/*", async (c, next) => {
   const session = await validateSession(c);
   if (!session) throw new HTTPException(401, { message: "Please log in" });
   const origin = c.req.header("origin");
-  if (c.req.method !== "GET" && origin && origin !== new URL(c.req.url).origin) {
+  if (!session.bearer && c.req.method !== "GET" && origin && origin !== new URL(c.req.url).origin) {
     throw new HTTPException(403, { message: "Cross-site request blocked" });
   }
   c.set("sessionHash", session.hash);
