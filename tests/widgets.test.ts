@@ -13,6 +13,14 @@ describe("resolveRange", () => {
     expect(resolveRange("last_year", today, 1)).toEqual({ from: "2025-01-01", to: "2025-12-31" });
     expect(resolveRange("last_12_months", today, 1)).toEqual({ from: "2025-11-01", to: today });
   });
+  it("today, yesterday and this week (Monday start)", () => {
+    expect(resolveRange("today", today, 1)).toEqual({ from: today, to: today });
+    expect(resolveRange("yesterday", "2026-10-01", 1)).toEqual({ from: "2026-09-30", to: "2026-09-30" });
+    expect(resolveRange("this_week", "2026-10-24", 1)).toEqual({ from: "2026-10-19", to: "2026-10-24" }); // Saturday
+    expect(resolveRange("this_week", "2026-10-25", 1)).toEqual({ from: "2026-10-19", to: "2026-10-25" }); // Sunday
+    expect(resolveRange("this_week", "2026-10-26", 1)).toEqual({ from: "2026-10-26", to: "2026-10-26" }); // Monday
+    expect(resolveRange("this_week", "2026-11-01", 1)).toEqual({ from: "2026-10-26", to: "2026-11-01" }); // across a month end
+  });
   it("custom dates, swapped if needed", () => {
     expect(resolveRange("custom", today, 1, { from: "2026-03-01", to: "2026-03-31" })).toEqual({ from: "2026-03-01", to: "2026-03-31" });
     expect(resolveRange("custom", today, 1, { from: "2026-03-31", to: "2026-03-01" })).toEqual({ from: "2026-03-01", to: "2026-03-31" });

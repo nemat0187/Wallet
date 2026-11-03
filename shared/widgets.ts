@@ -2,7 +2,7 @@
 // filters, and how to draw it. Shared by the API (which runs the query) and the
 // web app (which builds and draws widgets).
 
-import { addDays, periodFor, shiftPeriod } from "./money";
+import { addDays, daysBetween, periodFor, shiftPeriod } from "./money";
 
 export type Metric = "spent" | "income" | "net" | "count" | "average" | "flow_in" | "flow_out";
 export type GroupBy =
@@ -21,6 +21,9 @@ export type GroupBy =
   | "weekday_hour";
 export type ChartType = "number" | "bar" | "column" | "line" | "area" | "donut" | "table" | "heatmap";
 export type RangePreset =
+  | "today"
+  | "yesterday"
+  | "this_week"
   | "this_period"
   | "last_period"
   | "this_month"
@@ -126,6 +129,9 @@ export const CHARTS: { value: ChartType; label: string }[] = [
 ];
 
 export const RANGES: { value: RangePreset; label: string }[] = [
+  { value: "today", label: "Today" },
+  { value: "yesterday", label: "Yesterday" },
+  { value: "this_week", label: "This week (Mon to today)" },
   { value: "this_period", label: "This budget month" },
   { value: "last_period", label: "Last budget month" },
   { value: "this_month", label: "This calendar month" },
@@ -147,6 +153,15 @@ export function resolveRange(range: RangePreset, today: string, monthStartDay: n
   const [y, m] = today.split("-").map(Number);
   const pad = (n: number) => String(n).padStart(2, "0");
   switch (range) {
+    case "today":
+      return { from: today, to: today };
+    case "yesterday":
+      return { from: addDays(today, -1), to: addDays(today, -1) };
+    case "this_week": {
+      // Monday is day 1; 2000-01-03 was a Monday.
+      const sinceMonday = (((daysBetween("2000-01-03", today) % 7) + 7) % 7);
+      return { from: addDays(today, -sinceMonday), to: today };
+    }
     case "this_period":
       return { from: periodFor(today, monthStartDay).start, to: today };
     case "last_period": {

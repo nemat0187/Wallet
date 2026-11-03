@@ -19,6 +19,17 @@ const ids = (categories: Category[], slugs: string[]) => categories.filter((c) =
 
 export const TEMPLATES: Template[] = [
   {
+    key: "today",
+    name: "Today",
+    description: "What you have spent today compared with yesterday, where it went and at which hours.",
+    widgets: () => [
+      w({ title: "Spent today", chart: "number", metric: "spent", group_by: "none", range: "today", compare: true }),
+      w({ title: "Money in today", chart: "number", metric: "flow_in", group_by: "none", range: "today" }),
+      w({ title: "Today by category", chart: "donut", metric: "spent", group_by: "category", range: "today" }),
+      w({ title: "Today by hour", chart: "column", metric: "spent", group_by: "hour", range: "today", size: "full" }),
+    ],
+  },
+  {
     key: "monthly",
     name: "Monthly overview",
     description: "Spending, income and savings this month, where the money went and how each day looked.",

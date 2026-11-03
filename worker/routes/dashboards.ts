@@ -24,7 +24,7 @@ export const WidgetSchema = z.object({
   chart: z.enum(["number", "bar", "column", "line", "area", "donut", "table", "heatmap"]),
   metric: z.enum(["spent", "income", "net", "count", "average", "flow_in", "flow_out"]),
   group_by: z.enum(["none", "category", "subcategory", "merchant", "account", "day", "week", "month", "weekday", "hour", "tag", "type", "weekday_hour"]),
-  range: z.enum(["this_period", "last_period", "this_month", "last_month", "last_7", "last_30", "last_90", "this_year", "last_year", "last_12_months", "all_time", "custom"]),
+  range: z.enum(["today", "yesterday", "this_week", "this_period", "last_period", "this_month", "last_month", "last_7", "last_30", "last_90", "this_year", "last_year", "last_12_months", "all_time", "custom"]),
   from: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   to: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
   filters: Filters.default({}),
