@@ -50,8 +50,7 @@ It runs for free on your own Cloudflare account and only you can open it.
 - **More than one person.** Friends can ask for access with "Continue with Google"; you approve each person and
   everyone gets a completely separate wallet. Two-step verification with an authenticator app (and recovery codes),
   a PIN on every device and a list of signed-in devices keep accounts safe.
-- **Cash after bills.** Home shows what is left on your cards after the bills that usually repeat, per day until the
-  end of the budget month. **Savings goals** (Budgets page) track a target, what you have put aside and how much to
+- **Savings goals** (Budgets page) track a target, what you have put aside and how much to
   save each month to finish on time. Dashboard widgets can use **Today**, **Yesterday** and **This week**.
 - **Also:** cash expenses with one tap (or by Telegram: `12.5 taxi`), PDF/CSV statement import with duplicate
   detection, select many transactions to recategorize / tag as transfers / hide / delete at once, CSV/JSON export,
