@@ -11,6 +11,8 @@ import { userIdOf } from "../lib/scoped";
 import { OWNER_ID } from "../lib/userkeys";
 import { getSetting, getSettings, setSetting } from "./settings";
 import { anthropicAdapter } from "./aiproviders/anthropic";
+import { openaiAdapter } from "./aiproviders/openai";
+import { geminiAdapter } from "./aiproviders/gemini";
 import type { Adapter, ChatTool, Credentials, Effort, Part, Provider, Usage } from "./aiproviders/types";
 import { PROVIDER_LABEL, ProviderError, httpError, isProvider } from "./aiproviders/types";
 
@@ -127,8 +129,7 @@ export function describeBlock(reason: AiUnavailableReason): string {
 // --- calls ---------------------------------------------------------------------------------------------------------
 
 function adapterFor(provider: Provider): Adapter {
-  if (provider === "anthropic") return anthropicAdapter;
-  throw new ProviderError(provider, "bad_request", `${PROVIDER_LABEL[provider]} support is not available in this version yet.`);
+  return { anthropic: anthropicAdapter, openai: openaiAdapter, gemini: geminiAdapter }[provider];
 }
 
 /** Anything a provider SDK or fetch can throw, as a ProviderError with a friendly message. */
