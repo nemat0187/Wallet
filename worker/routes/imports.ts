@@ -120,7 +120,7 @@ app.post("/pdf", async (c) => {
       "You read bank account/card statements and list every transaction row. Skip opening/closing balance lines and totals. " +
       "Use the sign convention: money leaving the account is negative, money arriving is positive. Never invent rows.",
     content: [
-      { type: "document", source: { type: "base64", media_type: "application/pdf", data: input.file_base64 } },
+      { type: "pdf", base64: input.file_base64 },
       { type: "text", text: "List all transactions in this statement." },
     ],
     schema: StatementSchema,

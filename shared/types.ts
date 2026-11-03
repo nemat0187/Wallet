@@ -203,6 +203,8 @@ export interface Settings {
   overall_budget: number | null;
   ai_enabled: boolean;
   ai_monthly_cap_usd: number;
+  ai_provider: "anthropic" | "openai" | "gemini";
+  ai_monthly_token_cap: number;
   ai_fast_model: string;
   ai_smart_model: string;
   ai_auto_reports: boolean;

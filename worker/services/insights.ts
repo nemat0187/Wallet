@@ -5,13 +5,11 @@
 // each report to a few cents and makes the numbers in it exact.
 
 import { z } from "zod";
-import Anthropic from "@anthropic-ai/sdk";
-import { betaZodTool } from "@anthropic-ai/sdk/helpers/beta/zod";
 import type { Env } from "../env";
 import type { InsightReport } from "@shared/types";
 import { addDays, daysBetween, formatDay, formatMoney, shiftPeriod } from "@shared/money";
 import { all, first, insert, nowIso } from "../lib/db";
-import { aiBlocked, aiClient, describeBlock, fallbackParams, recordUsage, sqlOffset, structuredCall } from "./ai";
+import { aiBlocked, chatWithTools, describeBlock, sqlOffset, structuredCall, type ChatTool } from "./ai";
 import { categoryPath, loadCategories, type CategoryIndex } from "./categorize";
 import { anomalies, breakdown, merchantReport, recurring, today, TX_SELECT } from "./analytics";
 import { budgetStatus, spendingByCategory } from "./budgets";
@@ -227,6 +225,11 @@ export interface ChatMessage {
   content: string;
 }
 
+/** A question the assistant may ask the app. The model's input is checked against the schema before `run` is called. */
+function tool<S extends z.ZodType>(def: { name: string; description: string; inputSchema: S; run: (input: z.infer<S>) => Promise<string> }): ChatTool {
+  return { name: def.name, description: def.description, schema: def.inputSchema, run: def.run as ChatTool["run"] };
+}
+
 function chatTools(env: Env, idx: CategoryIndex) {
   const resolveCategoryIds = (name?: string | null): number[] | null => {
     if (!name) return null;
@@ -242,7 +245,7 @@ function chatTools(env: Env, idx: CategoryIndex) {
   };
 
   return [
-    betaZodTool({
+    tool({
       name: "spending_summary",
       description:
         "Totals of spending (expenses) or income for a date range, grouped by category, merchant, month, weekday or account. Amounts are AZN.",
@@ -297,7 +300,7 @@ function chatTools(env: Env, idx: CategoryIndex) {
         return rows.map((r) => `${label(r.g)}: ${formatMoney(Math.abs(r.total))} (${r.n} transactions)`).join("\n");
       },
     }),
-    betaZodTool({
+    tool({
       name: "find_transactions",
       description: "List individual transactions matching filters, newest first.",
       inputSchema: z.object({
@@ -341,7 +344,7 @@ function chatTools(env: Env, idx: CategoryIndex) {
           .join("\n");
       },
     }),
-    betaZodTool({
+    tool({
       name: "budgets_and_subscriptions",
       description: "Current budgets with spending so far this period, and detected subscriptions / recurring bills.",
       inputSchema: z.object({}),
@@ -372,44 +375,19 @@ export async function chat(env: Env, history: ChatMessage[]): Promise<{ reply: s
   const idx = await loadCategories(env.DB);
   const now = today(settings);
   const period = shiftPeriod(now, settings.month_start_day, 0);
-  const model = settings.ai_smart_model;
-  const client = aiClient(env);
 
   const system = [
     COACH_SYSTEM,
     "Answer questions about the person's own money using the tools; always look the numbers up instead of guessing.",
     "Reply concisely in the language of the question (English, Azerbaijani or Russian). Use short paragraphs or bullet points.",
   ].join(" ");
+  const context = `Today is ${now}. The current budget period is ${period.start} to ${period.end} (periods start on day ${settings.month_start_day} of the month).`;
 
-  const messages: Anthropic.Beta.BetaMessageParam[] = history.slice(-12).map((m) => ({ role: m.role, content: m.content }));
-  // The date-dependent block comes after the cache breakpoint so tools + instructions stay cached.
-  const dateInfo = `Today is ${now}. The current budget period is ${period.start} to ${period.end} (periods start on day ${settings.month_start_day} of the month).`;
-
-  const runner = client.beta.messages.toolRunner({
-    model,
-    max_tokens: 16000,
-    system: [
-      { type: "text", text: system, cache_control: { type: "ephemeral" } },
-      { type: "text", text: dateInfo },
-    ],
+  return chatWithTools(env, {
+    model: settings.ai_smart_model,
+    system,
+    context,
+    history: history.slice(-12).map((m) => ({ role: m.role, content: m.content })),
     tools: chatTools(env, idx),
-    messages,
-    output_config: { effort: "low" },
-    thread: false,
-    max_iterations: 6,
-    ...fallbackParams(model),
   });
-
-  let reply = "";
-  for await (const message of runner) {
-    await recordUsage(env.DB, "chat", message.model ?? model, message.usage);
-    if (message.stop_reason === "refusal") return { error: "The AI declined to answer that question." };
-    const text = message.content
-      .filter((b): b is Anthropic.Beta.BetaTextBlock => b.type === "text")
-      .map((b) => b.text)
-      .join("\n")
-      .trim();
-    if (text) reply = text;
-  }
-  return { reply: reply || "I couldn't find an answer to that." };
 }

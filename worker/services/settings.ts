@@ -5,7 +5,6 @@ import { HomeLayoutSchema } from "../routes/dashboards";
 import { all, run } from "../lib/db";
 import { ScopedD1, userIdOfDb } from "../lib/scoped";
 
-export const MODEL_OPTIONS = ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"] as const;
 
 /** Defaults for user-editable settings (stored as strings in the `settings` table). */
 const DEFAULTS: Record<string, string> = {
@@ -15,6 +14,8 @@ const DEFAULTS: Record<string, string> = {
   overall_budget: "",
   ai_enabled: "1",
   ai_monthly_cap_usd: "3",
+  ai_provider: "anthropic",
+  ai_monthly_token_cap: "2000000",
   ai_fast_model: "claude-haiku-5-5",
   ai_smart_model: "claude-opus-5-5",
   ai_auto_reports: "1",
@@ -32,8 +33,10 @@ export const EDITABLE: Record<string, (v: unknown) => string | null> = {
   overall_budget: (v) => (v === null ? "" : Number.isInteger(v) && (v as number) >= 0 ? String(v) : null),
   ai_enabled: bool,
   ai_monthly_cap_usd: (v) => (typeof v === "number" && v >= 0 && v <= 1000 ? String(v) : null),
-  ai_fast_model: (v) => ((MODEL_OPTIONS as readonly string[]).includes(v as string) ? (v as string) : null),
-  ai_smart_model: (v) => ((MODEL_OPTIONS as readonly string[]).includes(v as string) ? (v as string) : null),
+  ai_provider: (v) => (v === "anthropic" || v === "openai" || v === "gemini" ? v : null),
+  ai_monthly_token_cap: (v) => (Number.isInteger(v) && (v as number) >= 10_000 && (v as number) <= 1_000_000_000 ? String(v) : null),
+  ai_fast_model: modelName,
+  ai_smart_model: modelName,
   ai_auto_reports: bool,
   notify_each_transaction: bool,
   notify_budget_alerts: bool,
@@ -46,6 +49,11 @@ export const EDITABLE: Record<string, (v: unknown) => string | null> = {
     return parsed.success ? JSON.stringify(parsed.data) : null;
   },
 };
+
+/** A model id as providers write them (letters, digits and . _ : / -). The list itself comes from the provider. */
+function modelName(v: unknown): string | null {
+  return typeof v === "string" && /^[A-Za-z0-9._:/-]{1,100}$/.test(v) ? v : null;
+}
 
 function bool(v: unknown): string | null {
   return typeof v === "boolean" ? (v ? "1" : "0") : null;
@@ -110,6 +118,7 @@ function parseLayout(raw: string | undefined): HomeItem[] | null {
 }
 
 export function toSettings(raw: Record<string, string>, env: Env): Settings {
+  const provider = raw.ai_provider === "openai" || raw.ai_provider === "gemini" ? raw.ai_provider : "anthropic";
   return {
     month_start_day: Number(raw.month_start_day) || 1,
     base_currency: raw.base_currency || "AZN",
@@ -117,10 +126,13 @@ export function toSettings(raw: Record<string, string>, env: Env): Settings {
     overall_budget: raw.overall_budget ? Number(raw.overall_budget) : null,
     ai_enabled: raw.ai_enabled === "1",
     ai_monthly_cap_usd: Number(raw.ai_monthly_cap_usd ?? 3),
+    ai_provider: provider,
+    ai_monthly_token_cap: Number(raw.ai_monthly_token_cap ?? 2_000_000),
     ai_fast_model: raw.ai_fast_model,
     ai_smart_model: raw.ai_smart_model,
     ai_auto_reports: raw.ai_auto_reports === "1",
-    ai_configured: Boolean(env.ANTHROPIC_API_KEY),
+    // A key of their own for the chosen provider, or (owner only) the installation's Claude key.
+    ai_configured: Boolean(raw[`ai_key_${provider}`]) || (provider === "anthropic" && env.userId === 1 && Boolean(env.ANTHROPIC_API_KEY)),
     telegram_configured: Boolean(env.TELEGRAM_BOT_TOKEN),
     telegram_connected: Boolean(raw.telegram_chat_id),
     notify_each_transaction: raw.notify_each_transaction === "1",

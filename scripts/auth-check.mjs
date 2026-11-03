@@ -174,7 +174,8 @@ try {
   const setup = await owner("POST", "/auth/mfa/setup");
   check("setup returns a secret and an otpauth link", /^[A-Z2-7]{32}$/.test(setup.data.secret) && setup.data.uri.startsWith("otpauth://totp/"), JSON.stringify(setup.data));
   check("a wrong confirmation code is refused", (await owner("POST", "/auth/mfa/confirm", { code: "000000" })).status === 400);
-  const confirm = await owner("POST", "/auth/mfa/confirm", { code: totp(setup.data.secret) });
+  const confirmCode = totp(setup.data.secret); // reused below, so a 30-second boundary can't change the outcome
+  const confirm = await owner("POST", "/auth/mfa/confirm", { code: confirmCode });
   const recovery = confirm.data.recovery_codes ?? [];
   check("confirming turns MFA on and returns 8 recovery codes", confirm.status === 200 && recovery.length === 8 && recovery.every((c) => /^[0-9a-f]{5}-[0-9a-f]{5}$/.test(c)), JSON.stringify(confirm.data));
   const stored = sql("SELECT value FROM user_settings WHERE user_id = 1 AND key = 'totp_secret'")[0]?.value ?? "";
@@ -189,7 +190,7 @@ try {
   check("verify without the password step is refused", (await verify(undefined, totp(setup.data.secret, 1))).status === 401);
   check("a wrong code is refused", (await verify(l1.mfa, "123456")).status === 401);
   check("a forged password-step cookie is refused", (await verify("wallet_mfa=eyJ1IjoxfQ.AAAA", totp(setup.data.secret, 1))).status === 401);
-  const sameStep = await verify(l1.mfa, totp(setup.data.secret));
+  const sameStep = await verify(l1.mfa, confirmCode);
   check("the code used to turn MFA on cannot be used again", sameStep.status === 401);
   const next = await verify(l1.mfa, totp(setup.data.secret, 1));
   check("the next code signs in", next.status === 200 && next.session, JSON.stringify(next));

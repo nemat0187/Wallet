@@ -19,6 +19,10 @@ export interface Env {
   GOOGLE_TOKEN_URL?: string;
   /** 32 random bytes (base64) for encrypting secrets and signing tokens. Created once by the deploy script. */
   ENCRYPTION_KEY?: string;
+  /** Testing only: send a provider's requests to a local mock instead. */
+  AI_TEST_ANTHROPIC_URL?: string;
+  AI_TEST_OPENAI_URL?: string;
+  AI_TEST_GEMINI_URL?: string;
   /** Optional Telegram bot token for notifications and quick-add. */
   TELEGRAM_BOT_TOKEN?: string;
 }

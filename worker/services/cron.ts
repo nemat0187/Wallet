@@ -33,7 +33,7 @@ async function runForUser(env: Env, when: Date): Promise<void> {
   const ymd = localDate(when, settings.tz_offset_minutes);
 
   // 1. Categorize anything still waiting for AI (e.g. after an outage or cap reset).
-  await categorizeAllPending(env, 3);
+  await categorizeAllPending(env, 3).catch((e) => console.error("cron: categorize", e));
 
   if (hour !== REPORT_HOUR) return;
 

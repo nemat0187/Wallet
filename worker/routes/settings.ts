@@ -133,7 +133,7 @@ app.get("/export/backup.json", async (c) => {
   for (const table of BACKUP_TABLES) data[table] = await all(c.env.DB, `SELECT * FROM ${table}`);
   // Settings without secrets.
   data.settings = (await all<{ key: string; value: string }>(rawDb(c.env), "SELECT key, value FROM user_settings WHERE user_id = ?", userIdOf(c.env))).filter(
-    (s) => !/secret|telegram_chat|link_code/.test(s.key),
+    (s) => !/secret|telegram_chat|link_code|ai_key|recovery_codes|totp/.test(s.key),
   );
   return new Response(JSON.stringify({ version: 1, exported_at: new Date().toISOString(), data }, null, 1), {
     headers: {

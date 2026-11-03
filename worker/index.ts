@@ -21,12 +21,15 @@ import importRoutes from "./routes/imports";
 import settingsRoutes, { telegramWebhook } from "./routes/settings";
 import dashboardRoutes from "./routes/dashboards";
 import noteRoutes from "./routes/notes";
+import { ProviderError } from "./services/aiproviders/types";
 import adminRoutes from "./routes/admin";
 
 const app = new Hono<AppEnv>();
 
 app.onError((err, c) => {
   if (err instanceof HTTPException) return c.json({ error: err.message }, err.status);
+  // A problem with the person's AI provider: say what happened (400 when they can fix it, 502 for an outage).
+  if (err instanceof ProviderError) return c.json({ error: err.message }, err.userFixable ? 400 : 502);
   console.error(err);
   return c.json({ error: "Something went wrong on the server. Please try again." }, 500);
 });

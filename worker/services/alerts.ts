@@ -17,7 +17,7 @@ import { today } from "./analytics";
 export async function afterTransactions(env: Env, ids: number[], opts: { needsAi: boolean }): Promise<void> {
   if (ids.length === 0) return;
   try {
-    if (opts.needsAi) await categorizePendingWithAI(env);
+    if (opts.needsAi) await categorizePendingWithAI(env).catch((e) => console.error("categorize", e));
   } catch (e) {
     console.error("AI categorization failed", e);
   }

@@ -199,7 +199,7 @@ export async function handleTelegramUpdate(publicEnv: Env, secretHeader: string 
       `Category: ${escapeHtml(tx?.category_id ? categoryPath(ctx.idx, tx.category_id) : "Uncategorized")}${created.needs_ai ? " (AI will refine)" : ""}` +
       `${cash ? ` · ${escapeHtml(cash.name)}` : ""}`,
   );
-  if (created.needs_ai) await categorizePendingWithAI(env, 5);
+  if (created.needs_ai) await categorizePendingWithAI(env, 5).catch((e) => console.error("categorize", e));
 }
 
 async function summaryText(env: Env, scope: "today" | "month"): Promise<string> {
