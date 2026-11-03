@@ -17,6 +17,8 @@ export interface Env {
   /** Testing only: point the Google flow at a local mock. */
   GOOGLE_AUTH_URL?: string;
   GOOGLE_TOKEN_URL?: string;
+  /** 32 random bytes (base64) for encrypting secrets and signing tokens. Created once by the deploy script. */
+  ENCRYPTION_KEY?: string;
   /** Optional Telegram bot token for notifications and quick-add. */
   TELEGRAM_BOT_TOKEN?: string;
 }

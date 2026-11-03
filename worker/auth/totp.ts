@@ -71,6 +71,17 @@ export async function verifyTotp(secret: string, code: string, now = Date.now())
   return false;
 }
 
+/** The time step of the matching code (current step ± 1), or null. Lets callers refuse a code that was already used. */
+export async function matchTotpStep(secret: string, code: string, now = Date.now()): Promise<number | null> {
+  const cleaned = code.replace(/\s/g, "");
+  if (!/^\d{6}$/.test(cleaned)) return null;
+  const counter = Math.floor(now / 30_000);
+  for (const delta of [0, -1, 1]) {
+    if ((await totpCode(secret, counter + delta)) === cleaned) return counter + delta;
+  }
+  return null;
+}
+
 export function totpUri(secret: string, label = "Wallet", issuer = "Wallet"): string {
   return `otpauth://totp/${encodeURIComponent(issuer)}:${encodeURIComponent(label)}?secret=${secret}&issuer=${encodeURIComponent(issuer)}&algorithm=SHA1&digits=6&period=30`;
 }

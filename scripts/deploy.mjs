@@ -10,6 +10,7 @@
 // Optional: ANTHROPIC_API_KEY, TELEGRAM_BOT_TOKEN, ANTHROPIC_BASE_URL, GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
 
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 
 const DB_NAME = "wallet-db";
@@ -85,6 +86,17 @@ try {
   const secrets = {};
   for (const key of ["APP_PASSWORD", "ANTHROPIC_API_KEY", "TELEGRAM_BOT_TOKEN", "ANTHROPIC_BASE_URL", "GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"]) {
     if (process.env[key]) secrets[key] = process.env[key];
+  }
+  // The encryption key is created once and never replaced: everything encrypted with it (two-step secrets, later
+  // AI keys) would become unreadable. If the list of existing secrets can't be read, no key is created this time.
+  try {
+    const existing = JSON.parse(wrangler(["secret", "list", "--format", "json", "--config", GENERATED], { capture: true }));
+    if (!existing.some((x) => x.name === "ENCRYPTION_KEY")) {
+      secrets.ENCRYPTION_KEY = randomBytes(32).toString("base64");
+      console.log("Created the app's encryption key (first deploy with this feature).");
+    }
+  } catch (e) {
+    console.warn("Could not check for the encryption key, leaving it as it is:", e.message);
   }
   writeFileSync(SECRETS_FILE, JSON.stringify(secrets), { mode: 0o600 });
   try {

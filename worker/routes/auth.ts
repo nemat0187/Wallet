@@ -8,9 +8,10 @@ import { all, first, insert, nowIso, run } from "../lib/db";
 import { clientIp, createSession, destroySession, validateSession } from "../auth/session";
 import { forUser, rawDb } from "../lib/scoped";
 import { OWNER_ID } from "../lib/userkeys";
-import { lockedFor, lockedKey, recordFailure, recordSignupRequest, resetFailures } from "../auth/ratelimit";
-import { generateTotpSecret, totpUri, verifyTotp } from "../auth/totp";
-import { getRawSettings, getSetting, setSetting } from "../services/settings";
+import { lockedFor, lockedKey, recordFailure, recordKeyFailure, recordSignupRequest, resetFailures, resetKey } from "../auth/ratelimit";
+import { confirmEnrolment, disableMfa, mfaEnabled, mfaStatus, regenerateRecoveryCodes, skipMfa, startEnrolment, verifySecondFactor } from "../auth/mfa";
+import { signToken, verifyToken } from "../lib/secretbox";
+import { getSetting, setSetting } from "../services/settings";
 import { authUrl, exchangeCode, googleConfigured } from "../services/google";
 import { notifyAdmins, escapeHtml } from "../services/telegram";
 import { randomToken } from "../lib/crypto";
@@ -19,7 +20,7 @@ import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 const app = new Hono<AppEnv>();
 
 app.post("/login", async (c) => {
-  const { password, code } = await body(c, z.object({ password: z.string().max(500), code: z.string().max(10).optional() }));
+  const { password } = await body(c, z.object({ password: z.string().max(500) }));
   if (!c.env.APP_PASSWORD) {
     throw new HTTPException(503, {
       message: "No password is configured yet. Add the APP_PASSWORD secret (see the setup guide) and redeploy.",
@@ -33,16 +34,48 @@ app.post("/login", async (c) => {
     await recordFailure(c.env.DB, ip);
     throw new HTTPException(401, { message: "Wrong password" });
   }
-  const totpSecret = await getSetting(forUser(c.env, OWNER_ID).DB, "totp_secret");
-  if (totpSecret) {
-    if (!code) return c.json({ ok: false, totp_required: true });
-    if (!(await verifyTotp(totpSecret, code))) {
-      await recordFailure(c.env.DB, ip);
-      throw new HTTPException(401, { message: "Wrong 6-digit code" });
-    }
-  }
   await resetFailures(c.env.DB, ip);
-  await createSession(c, OWNER_ID);
+  return signIn(c, OWNER_ID);
+});
+
+/**
+ * The last step of every sign-in method (password, Google): users with two-step verification get a short-lived
+ * signed "password done" cookie and must send a code to /mfa/verify; everyone else gets their session now.
+ */
+async function signIn(c: Context<AppEnv>, userId: number, redirect = false) {
+  if (await mfaEnabled(forUser(c.env, userId))) {
+    setCookie(c, MFA_COOKIE, await signToken(c.env, { u: userId }, 300), {
+      httpOnly: true,
+      secure: new URL(c.req.url).protocol === "https:",
+      sameSite: "Strict",
+      path: "/api/auth",
+      maxAge: 300,
+    });
+    return redirect ? c.redirect("/?auth=mfa") : c.json({ ok: false, mfa_required: true });
+  }
+  await createSession(c, userId);
+  return redirect ? c.redirect("/") : c.json({ ok: true });
+}
+
+const MFA_COOKIE = "wallet_mfa";
+
+app.post("/mfa/verify", async (c) => {
+  const { code } = await body(c, z.object({ code: z.string().min(6).max(20) }));
+  const pending = await verifyToken<{ u: number }>(c.env, getCookie(c, MFA_COOKIE));
+  if (!pending) throw new HTTPException(401, { message: "Your sign-in timed out. Please start again." });
+  const db = rawDb(c.env);
+  const ip = clientIp(c);
+  const key = `mfa:${pending.u}`;
+  const wait = Math.max(await lockedFor(db, ip), await lockedKey(db, key));
+  if (wait > 0) throw new HTTPException(429, { message: `Too many attempts. Try again in ${Math.ceil(wait / 60)} minute(s).` });
+  if (!(await verifySecondFactor(forUser(c.env, pending.u), code))) {
+    await recordFailure(db, ip);
+    await recordKeyFailure(db, key, 5, 15);
+    throw new HTTPException(401, { message: "That code is not correct" });
+  }
+  await resetKey(db, key);
+  deleteCookie(c, MFA_COOKIE, { path: "/api/auth" });
+  await createSession(c, pending.u);
   return c.json({ ok: true });
 });
 
@@ -131,8 +164,8 @@ app.get("/google/callback", async (c) => {
     if (user.status === "pending") return done("/?auth=pending");
     if (user.status === "disabled") return done("/?auth=disabled");
     if (!user.google_sub) await run(db, "UPDATE users SET google_sub = ? WHERE id = ?", claims.sub, user.id);
-    await createSession(c, user.id);
-    return done("/");
+    deleteCookie(c, GOOGLE_COOKIE, { path: "/api/auth/google" });
+    return signIn(c, user.id, true);
   }
 
   // A new person asking for access.
@@ -169,29 +202,38 @@ app.get("/google/link", async (c) => {
   return c.redirect(r.url);
 });
 
-app.post("/totp/setup", async (c) => {
-  const secret = generateTotpSecret();
-  await setSetting(c.env.DB, "totp_pending_secret", secret);
-  return c.json({ secret, uri: totpUri(secret, "owner", "Wallet") });
+app.get("/mfa", async (c) => c.json(await mfaStatus(c.env)));
+
+app.post("/mfa/setup", async (c) => {
+  if (await mfaEnabled(c.env)) throw new HTTPException(400, { message: "Two-step verification is already on" });
+  const me = await first<{ email: string | null; name: string }>(rawDb(c.env), "SELECT email, name FROM users WHERE id = ?", c.get("userId"));
+  return c.json(await startEnrolment(c.env, me?.email || me?.name || "account"));
 });
 
-app.post("/totp/enable", async (c) => {
+app.post("/mfa/confirm", async (c) => {
   const { code } = await body(c, z.object({ code: z.string() }));
-  const pending = await getSetting(c.env.DB, "totp_pending_secret");
-  if (!pending) throw new HTTPException(400, { message: "Start the setup first" });
-  if (!(await verifyTotp(pending, code))) throw new HTTPException(400, { message: "That code is not correct. Check the time on your phone and try again." });
-  await setSetting(c.env.DB, "totp_secret", pending);
-  await setSetting(c.env.DB, "totp_pending_secret", null);
+  const codes = await confirmEnrolment(c.env, code);
+  if (!codes) throw new HTTPException(400, { message: "That code is not correct. Check the time on your phone and try again." });
+  return c.json({ ok: true, recovery_codes: codes });
+});
+
+app.post("/mfa/skip", async (c) => {
+  await skipMfa(c.env);
   return c.json({ ok: true });
 });
 
-app.post("/totp/disable", async (c) => {
+app.post("/mfa/disable", async (c) => {
   const { code } = await body(c, z.object({ code: z.string() }));
-  const raw = await getRawSettings(c.env.DB);
-  if (!raw.totp_secret) return c.json({ ok: true });
-  if (!(await verifyTotp(raw.totp_secret, code))) throw new HTTPException(400, { message: "That code is not correct" });
-  await setSetting(c.env.DB, "totp_secret", null);
+  if (!(await mfaEnabled(c.env))) return c.json({ ok: true });
+  if (!(await disableMfa(c.env, code))) throw new HTTPException(400, { message: "That code is not correct" });
   return c.json({ ok: true });
+});
+
+app.post("/mfa/recovery-codes", async (c) => {
+  const { code } = await body(c, z.object({ code: z.string() }));
+  const codes = await regenerateRecoveryCodes(c.env, code);
+  if (!codes) throw new HTTPException(400, { message: "That code is not correct" });
+  return c.json({ ok: true, recovery_codes: codes });
 });
 
 app.get("/sessions", async (c) => {

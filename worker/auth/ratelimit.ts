@@ -58,3 +58,12 @@ async function bump(db: D1Database, key: string, max: number, lockMinutes: numbe
     lockedUntil,
   );
 }
+
+/** Count a failure against any key (e.g. "mfa:7"): locked for `lockMinutes` after `max` failures within the hour. */
+export async function recordKeyFailure(db: D1Database, key: string, max: number, lockMinutes: number): Promise<void> {
+  await bump(db, key, max, lockMinutes);
+}
+
+export async function resetKey(db: D1Database, key: string): Promise<void> {
+  await run(db, "DELETE FROM login_attempts WHERE key = ?", key);
+}

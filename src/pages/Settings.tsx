@@ -1,7 +1,6 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { useLocation } from "react-router-dom";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import QRCode from "qrcode";
 import { Copy, KeyRound, Smartphone, Sparkles, Send, CalendarDays, ShieldCheck, Database, Palette, Trash2, LogOut, CheckCircle2, UserRound } from "lucide-react";
 import type { Settings as SettingsT } from "@shared/types";
 import { del, get, patch, post } from "../lib/api";
@@ -9,6 +8,7 @@ import { useBootstrap, useRefresh } from "../lib/data";
 import { Button, ErrorNote, Label, Segmented, Spinner, Toggle, clsx, errorText, useCopy, useToast } from "../lib/ui";
 import { PageHeader } from "../components/Layout";
 import { THEMES, applyTheme, savedTheme, type ThemeId } from "../lib/theme";
+import { TwoStepSection } from "../components/TwoStep";
 
 export default function SettingsPage() {
   const boot = useBootstrap();
@@ -26,7 +26,7 @@ export default function SettingsPage() {
       <AiSettings s={s} />
       <TelegramSettings s={s} />
       <PeriodSettings s={s} />
-      <Security s={s} />
+      <Security />
       <Appearance />
       <DataSection />
     </div>
@@ -557,78 +557,17 @@ function PeriodSettings({ s }: { s: SettingsT }) {
 // ---------------------------------------------------------------------------
 // Security
 
-function Security({ s }: { s: SettingsT }) {
-  const qc = useQueryClient();
-  const toast = useToast();
-  const [setup, setSetup] = useState<{ secret: string; uri: string; qr: string } | null>(null);
-  const [code, setCode] = useState("");
+function Security() {
   const sessions = useQuery({
     queryKey: ["sessions"],
     queryFn: () => get<{ id: string; created_at: string; last_seen_at: string; user_agent: string | null; ip: string | null; current: boolean }[]>("/auth/sessions"),
-  });
-  const start = useMutation({
-    mutationFn: async () => {
-      const r = await post<{ secret: string; uri: string }>("/auth/totp/setup");
-      return { ...r, qr: await QRCode.toDataURL(r.uri, { margin: 1, width: 220 }) };
-    },
-    onSuccess: setSetup,
-  });
-  const enable = useMutation({
-    mutationFn: () => post("/auth/totp/enable", { code }),
-    onSuccess: () => {
-      toast("Two-step login is on");
-      setSetup(null);
-      setCode("");
-      qc.invalidateQueries();
-    },
-  });
-  const disable = useMutation({
-    mutationFn: () => post("/auth/totp/disable", { code }),
-    onSuccess: () => {
-      toast("Two-step login is off");
-      setCode("");
-      qc.invalidateQueries();
-    },
   });
   const revoke = useMutation({ mutationFn: () => post("/auth/sessions/revoke-others"), onSuccess: () => sessions.refetch() });
   const logout = useMutation({ mutationFn: () => post("/auth/logout"), onSuccess: () => window.location.reload() });
 
   return (
-    <Card id="security" icon={<ShieldCheck size={20} />} title="Security" intro="Only you can open this app. To change your password, update the APP_PASSWORD secret in GitHub and run Deploy again.">
-      <h3 className="font-semibold">Two-step login</h3>
-      <p className="mt-1 text-sm text-ink-2">Ask for a 6-digit code from an authenticator app (Google Authenticator, Microsoft Authenticator…) in addition to your password.</p>
-      {s.totp_enabled ? (
-        <div className="mt-3 flex flex-wrap items-end gap-2">
-          <p className="w-full text-sm text-good">On</p>
-          <input className="field w-36 num" inputMode="numeric" maxLength={6} placeholder="Code" value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} />
-          <Button variant="danger" loading={disable.isPending} disabled={code.length !== 6} onClick={() => disable.mutate()}>
-            Turn off
-          </Button>
-          <ErrorNote error={disable.error} />
-        </div>
-      ) : setup ? (
-        <div className="mt-3 flex flex-col gap-3 sm:flex-row">
-          <img src={setup.qr} alt="QR code for your authenticator app" className="h-44 w-44 rounded-xl bg-white p-2" />
-          <div className="flex-1 text-sm">
-            <p>Scan this with your authenticator app, or enter this key by hand:</p>
-            <code className="mt-1 block break-all rounded-lg bg-surface-2 px-3 py-2">{setup.secret}</code>
-            <label className="mt-3 block">
-              <Label>Then type the 6-digit code it shows</Label>
-              <div className="flex gap-2">
-                <input className="field w-36 num" inputMode="numeric" maxLength={6} value={code} onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))} />
-                <Button variant="primary" loading={enable.isPending} disabled={code.length !== 6} onClick={() => enable.mutate()}>
-                  Turn on
-                </Button>
-              </div>
-            </label>
-            <ErrorNote error={enable.error} />
-          </div>
-        </div>
-      ) : (
-        <Button className="mt-3" loading={start.isPending} onClick={() => start.mutate()}>
-          Set up two-step login
-        </Button>
-      )}
+    <Card id="security" icon={<ShieldCheck size={20} />} title="Security" intro="To change the owner password, update the APP_PASSWORD secret in GitHub and run Deploy again.">
+      <TwoStepSection />
 
       <h3 className="mt-6 font-semibold">Logged-in devices</h3>
       <ul className="mt-2 divide-y divide-line rounded-2xl border border-line text-sm">

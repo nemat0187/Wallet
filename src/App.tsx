@@ -4,12 +4,15 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { get } from "./lib/api";
 import { Spinner } from "./lib/ui";
 import Layout from "./components/Layout";
+import MfaGate from "./components/MfaGate";
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Activity from "./pages/Activity";
 
 /** After a new version is deployed, old page files disappear; reload once to pick up the new ones. */
-function page<T extends { default: React.ComponentType }>(load: () => Promise<T>) {
+function page<T extends { default: React.ComponentType }>(
+  load: () => Promise<T>,
+) {
   return lazy(() =>
     load().catch((err) => {
       const key = "wallet-reloaded-at";
@@ -41,12 +44,19 @@ export default function App() {
   const qc = useQueryClient();
   const me = useQuery({
     queryKey: ["me"],
-    queryFn: () => get<{ authenticated: boolean; password_configured: boolean; google_configured: boolean; registration_open: boolean }>("/auth/me"),
+    queryFn: () =>
+      get<{
+        authenticated: boolean;
+        password_configured: boolean;
+        google_configured: boolean;
+        registration_open: boolean;
+      }>("/auth/me"),
     staleTime: Infinity,
   });
   // null = follow the server's answer; true/false = what happened in this tab since.
   const [authed, setAuthed] = useState<boolean | null>(null);
-  const dropCachedData = () => qc.removeQueries({ predicate: (q) => q.queryKey[0] !== "me" });
+  const dropCachedData = () =>
+    qc.removeQueries({ predicate: (q) => q.queryKey[0] !== "me" });
 
   useEffect(() => {
     const onLogout = () => {
@@ -73,27 +83,29 @@ export default function App() {
   }
 
   return (
-    <Suspense fallback={<Spinner />}>
-      <Routes>
-        <Route element={<Layout />}>
-          <Route index element={<Dashboard />} />
-          <Route path="activity" element={<Activity />} />
-          <Route path="budgets" element={<Budgets />} />
-          <Route path="insights" element={<Insights />} />
-          <Route path="analytics" element={<Analytics />} />
-          <Route path="dashboards" element={<Dashboards />} />
-          <Route path="notes" element={<Notes />} />
-          <Route path="admin" element={<Admin />} />
-          <Route path="categories" element={<Categories />} />
-          <Route path="merchants" element={<Merchants />} />
-          <Route path="accounts" element={<Accounts />} />
-          <Route path="inbox" element={<InboxPage />} />
-          <Route path="import" element={<ImportPage />} />
-          <Route path="settings" element={<SettingsPage />} />
-          <Route path="more" element={<More />} />
-          <Route path="*" element={<Dashboard />} />
-        </Route>
-      </Routes>
-    </Suspense>
+    <MfaGate>
+      <Suspense fallback={<Spinner />}>
+        <Routes>
+          <Route element={<Layout />}>
+            <Route index element={<Dashboard />} />
+            <Route path="activity" element={<Activity />} />
+            <Route path="budgets" element={<Budgets />} />
+            <Route path="insights" element={<Insights />} />
+            <Route path="analytics" element={<Analytics />} />
+            <Route path="dashboards" element={<Dashboards />} />
+            <Route path="notes" element={<Notes />} />
+            <Route path="admin" element={<Admin />} />
+            <Route path="categories" element={<Categories />} />
+            <Route path="merchants" element={<Merchants />} />
+            <Route path="accounts" element={<Accounts />} />
+            <Route path="inbox" element={<InboxPage />} />
+            <Route path="import" element={<ImportPage />} />
+            <Route path="settings" element={<SettingsPage />} />
+            <Route path="more" element={<More />} />
+            <Route path="*" element={<Dashboard />} />
+          </Route>
+        </Routes>
+      </Suspense>
+    </MfaGate>
   );
 }

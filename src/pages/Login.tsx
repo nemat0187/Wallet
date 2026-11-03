@@ -15,6 +15,7 @@ const AUTH_NOTES: Record<string, { tone: "info" | "warn"; title: string; text: s
   disabled: { tone: "warn", title: "Account switched off", text: "Your access has been turned off. Contact the owner." },
   busy: { tone: "warn", title: "Too many requests", text: "Please try again a bit later." },
   cancelled: { tone: "warn", title: "Google sign-in was cancelled", text: "You can try again." },
+  mfa: { tone: "info", title: "One more step", text: "Enter the code from your authenticator app to finish signing in." },
   error: { tone: "warn", title: "Couldn't sign in with Google", text: "Please try again. If it keeps happening, tell the owner." },
 };
 
@@ -44,17 +45,26 @@ export default function Login({
   const note = auth ? AUTH_NOTES[auth] : null;
   const [password, setPassword] = useState("");
   const [code, setCode] = useState("");
-  const [needCode, setNeedCode] = useState(false);
+  // The code step is shown after the password (or Google, which comes back with ?auth=mfa).
+  const [needCode, setNeedCode] = useState(auth === "mfa");
   // Without Google the password form is the only way in, so it is open; with Google it sits under a toggle.
   const [showPassword, setShowPassword] = useState(!googleConfigured || auth === "closed");
   const codeRef = useRef<HTMLInputElement>(null);
   const login = useMutation({
-    mutationFn: () => post<{ ok: boolean; totp_required?: boolean }>("/auth/login", { password, code: needCode ? code : undefined }),
+    mutationFn: () => post<{ ok: boolean; mfa_required?: boolean }>("/auth/login", { password }),
     onSuccess: (r) => {
-      if (r.totp_required) {
+      if (r.mfa_required) {
         setNeedCode(true);
         setTimeout(() => codeRef.current?.focus(), 20);
       } else onLoggedIn();
+    },
+  });
+  const verify = useMutation({
+    mutationFn: () => post("/auth/mfa/verify", { code }),
+    onSuccess: () => {
+      // Leave the "?auth=mfa" address behind before showing the app.
+      window.history.replaceState(null, "", "/");
+      onLoggedIn();
     },
   });
 
@@ -75,7 +85,7 @@ export default function Login({
           </div>
         )}
 
-        {googleConfigured && (
+        {googleConfigured && !needCode && (
           <>
             <a
               href="/api/auth/google/start"
@@ -97,42 +107,57 @@ export default function Login({
           </>
         )}
 
-        {showPassword && (
+        {needCode ? (
           <form
-            className="mt-2"
+            className="mt-6"
             onSubmit={(e) => {
               e.preventDefault();
-              login.mutate();
+              verify.mutate();
             }}
           >
-            {!passwordConfigured && (
-              <p className="mt-2 rounded-xl bg-warn-soft px-3 py-2 text-sm">No password has been set up yet. Follow step 4 of the setup guide (APP_PASSWORD), then redeploy.</p>
-            )}
-            <label className="mt-4 block">
-              <Label>Password</Label>
-              <input type="password" className="field" autoComplete="current-password" autoFocus={!googleConfigured} value={password} onChange={(e) => setPassword(e.target.value)} />
+            <label className="block">
+              <Label hint="or a recovery code">Code from your authenticator app</Label>
+              <input
+                ref={codeRef}
+                className="field num tracking-[0.2em]"
+                autoFocus
+                autoComplete="one-time-code"
+                maxLength={11}
+                value={code}
+                onChange={(e) => setCode(e.target.value)}
+              />
             </label>
-            {needCode && (
-              <label className="mt-4 block">
-                <Label>6-digit code from your authenticator app</Label>
-                <input
-                  ref={codeRef}
-                  className="field num tracking-[0.3em]"
-                  inputMode="numeric"
-                  autoComplete="one-time-code"
-                  maxLength={6}
-                  value={code}
-                  onChange={(e) => setCode(e.target.value.replace(/\D/g, ""))}
-                />
-              </label>
-            )}
             <div className="mt-4">
-              <ErrorNote error={login.error} />
+              <ErrorNote error={verify.error} />
             </div>
-            <Button type="submit" variant="primary" className="mt-4 w-full" loading={login.isPending} disabled={!password}>
-              <Lock size={16} /> Unlock
+            <Button type="submit" variant="primary" className="mt-4 w-full" loading={verify.isPending} disabled={code.trim().length < 6}>
+              <Lock size={16} /> Continue
             </Button>
           </form>
+        ) : (
+          showPassword && (
+            <form
+              className="mt-2"
+              onSubmit={(e) => {
+                e.preventDefault();
+                login.mutate();
+              }}
+            >
+              {!passwordConfigured && (
+                <p className="mt-2 rounded-xl bg-warn-soft px-3 py-2 text-sm">No password has been set up yet. Follow step 4 of the setup guide (APP_PASSWORD), then redeploy.</p>
+              )}
+              <label className="mt-4 block">
+                <Label>Password</Label>
+                <input type="password" className="field" autoComplete="current-password" autoFocus={!googleConfigured} value={password} onChange={(e) => setPassword(e.target.value)} />
+              </label>
+              <div className="mt-4">
+                <ErrorNote error={login.error} />
+              </div>
+              <Button type="submit" variant="primary" className="mt-4 w-full" loading={login.isPending} disabled={!password}>
+                <Lock size={16} /> Unlock
+              </Button>
+            </form>
+          )
         )}
       </div>
     </main>
