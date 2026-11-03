@@ -13,6 +13,8 @@ import { all, first, nowIso, placeholders, run } from "../lib/db";
 import { builtinMatch, merchantKey, prettifyMerchant } from "./merchants";
 import { aiBlocked, structuredCall } from "./ai";
 import { getSettings } from "./settings";
+import { userIdOfDb } from "../lib/scoped";
+import { storedMerchantKey } from "../lib/userkeys";
 
 export interface CategoryIndex {
   list: Category[];
@@ -52,7 +54,7 @@ export async function upsertMerchant(db: D1Database, raw: string): Promise<Merch
   const builtin = builtinMatch(key);
   const name = builtin?.name || prettifyMerchant(raw.length > 40 ? key : raw);
   const now = nowIso();
-  await run(db, "INSERT OR IGNORE INTO merchants (key, name, created_at, updated_at) VALUES (?, ?, ?, ?)", key, name, now, now);
+  await run(db, "INSERT OR IGNORE INTO merchants (key, name, created_at, updated_at) VALUES (?, ?, ?, ?)", storedMerchantKey(userIdOfDb(db), key), name, now, now);
   return (await first<MerchantRow>(db, "SELECT id, key, name, category_id, category_source FROM merchants WHERE key = ?", key))!;
 }
 

@@ -39,11 +39,6 @@ app.use("/api/*", async (c, next) => {
   c.header("X-Frame-Options", "DENY");
 });
 
-app.use("/api/*", async (c, next) => {
-  await ensureSeeded(c.env.DB);
-  await next();
-});
-
 app.get("/api/health", (c) => c.json({ ok: true }));
 
 // Endpoints that authenticate themselves (phone webhook token, Telegram secret, login form).
@@ -63,6 +58,7 @@ app.use("/api/*", async (c, next) => {
   c.set("userId", session.userId);
   // From here on every route sees only this user's rows (worker/lib/scoped.ts).
   c.env = forUser(c.env, session.userId);
+  await ensureSeeded(c.env.DB);
   await next();
 });
 

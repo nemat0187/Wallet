@@ -3,9 +3,11 @@
 
 import type { Env } from "../env";
 import { formatMoney, parseAmount, shiftPeriod } from "@shared/money";
-import { first } from "../lib/db";
 import { randomToken, safeEqual } from "../lib/crypto";
-import { getRawSettings, getSettings, setSetting } from "./settings";
+import { getRawSettings, getSetting, getSettings, setSetting } from "./settings";
+import { forUser, rawDb } from "../lib/scoped";
+import { all, first } from "../lib/db";
+import { ensureSeeded } from "./seed";
 import { createContext, createTransaction } from "./transactions";
 import { ingestMessage } from "./ingest";
 import { categorizePendingWithAI, categoryPath, loadCategories } from "./categorize";
@@ -44,42 +46,67 @@ export async function notifyOwner(env: Env, html: string): Promise<boolean> {
   }
 }
 
-/** Registers the webhook and returns a one-time link the owner opens to link their chat. */
+/**
+ * Registers the (single, shared) bot webhook once and returns a one-time link the user opens to link their chat.
+ * `env` is the signed-in user's Env.
+ */
 export async function startTelegramLink(env: Env, origin: string): Promise<{ bot_username: string; link: string; code: string }> {
   const me = (await tg(env, "getMe", {})) as { username: string };
-  const secret = randomToken(24);
   const code = randomToken(9).replace(/[^A-Za-z0-9]/g, "").slice(0, 10);
-  await tg(env, "setWebhook", {
-    url: `${origin}/api/telegram/webhook`,
-    secret_token: secret,
-    allowed_updates: ["message"],
-    drop_pending_updates: true,
-  });
-  await setSetting(env.DB, "telegram_webhook_secret", secret);
+  if (!(await getSetting(env.DB, "telegram_webhook_secret"))) {
+    const secret = randomToken(24);
+    await tg(env, "setWebhook", {
+      url: `${origin}/api/telegram/webhook`,
+      secret_token: secret,
+      allowed_updates: ["message"],
+      drop_pending_updates: true,
+    });
+    await setSetting(env.DB, "telegram_webhook_secret", secret);
+  }
   await setSetting(env.DB, "telegram_link_code", `${code}:${Date.now() + 15 * 60_000}`);
   return { bot_username: me.username, code, link: `https://t.me/${me.username}?start=${code}` };
 }
 
+/** Unlinks this user's chat. The bot's webhook stays, other users may be using it. */
 export async function disconnectTelegram(env: Env): Promise<void> {
-  try {
-    await tg(env, "deleteWebhook", {});
-  } catch {
-    // token may already be gone
-  }
-  for (const key of ["telegram_chat_id", "telegram_webhook_secret", "telegram_link_code"]) await setSetting(env.DB, key, null);
+  for (const key of ["telegram_chat_id", "telegram_link_code"]) await setSetting(env.DB, key, null);
 }
 
 interface TgUpdate {
   message?: { chat: { id: number }; text?: string; caption?: string };
 }
 
-export async function handleTelegramUpdate(env: Env, secretHeader: string | undefined, update: TgUpdate): Promise<void> {
-  const raw = await getRawSettings(env.DB);
-  if (!raw.telegram_webhook_secret || !secretHeader || !(await safeEqual(secretHeader, raw.telegram_webhook_secret))) return;
+/** Which user is behind this Telegram message: the one whose link code was sent, else the one linked to the chat. */
+async function telegramUser(db: D1Database, chatId: string, text: string): Promise<number | null> {
+  if (text.startsWith("/start")) {
+    const code = text.split(/\s+/)[1] ?? "";
+    if (code) {
+      const rows = await all<{ user_id: number; value: string }>(db, "SELECT user_id, value FROM user_settings WHERE key = 'telegram_link_code'");
+      for (const r of rows) {
+        const [expected, expires] = r.value.split(":");
+        if (expected === code && Number(expires) > Date.now()) return r.user_id;
+      }
+    }
+  }
+  const linked = await first<{ user_id: number }>(db, "SELECT user_id FROM user_settings WHERE key = 'telegram_chat_id' AND value = ?", chatId);
+  return linked?.user_id ?? null;
+}
+
+export async function handleTelegramUpdate(publicEnv: Env, secretHeader: string | undefined, update: TgUpdate): Promise<void> {
+  const secret = await getSetting(publicEnv.DB, "telegram_webhook_secret");
+  if (!secret || !secretHeader || !(await safeEqual(secretHeader, secret))) return;
   const msg = update.message;
   const text = (msg?.text ?? msg?.caption ?? "").trim();
   if (!msg || !text) return;
   const chatId = String(msg.chat.id);
+  const userId = await telegramUser(rawDb(publicEnv), chatId, text);
+  if (userId === null) {
+    if (text.startsWith("/start")) await tg(publicEnv, "sendMessage", { chat_id: chatId, text: "This is a private bot.", parse_mode: "HTML" });
+    return; // ignore strangers completely
+  }
+  const env = forUser(publicEnv, userId);
+  await ensureSeeded(env.DB);
+  const raw = await getRawSettings(env.DB);
   const reply = (html: string) => tg(env, "sendMessage", { chat_id: chatId, text: html, parse_mode: "HTML" });
 
   // Linking: /start <code>

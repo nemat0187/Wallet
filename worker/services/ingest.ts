@@ -8,6 +8,8 @@ import { sha256Hex } from "../lib/crypto";
 import { isOtpMessage, parseBankMessage } from "./parser";
 import { aiBlocked, structuredCall } from "./ai";
 import { setSetting } from "./settings";
+import { userIdOf } from "../lib/scoped";
+import { messageHashInput } from "../lib/userkeys";
 import { createContext, createTransaction, resolveAccount, suggestTransferPair } from "./transactions";
 import { convert } from "./fx";
 import { localDate, parseAmount } from "@shared/money";
@@ -42,7 +44,7 @@ export async function ingestMessage(env: Env, input: IngestInput): Promise<Inges
     return { status: "ignored", message_id: null, transaction_id: null, needs_ai: false, error: "One-time code message (not stored)" };
   }
 
-  const hash = await sha256Hex(body);
+  const hash = await sha256Hex(messageHashInput(userIdOf(env), body));
   const existing = await first<{ id: number; transaction_id: number | null }>(
     env.DB,
     "SELECT id, transaction_id FROM raw_messages WHERE body_hash = ?",

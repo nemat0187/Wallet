@@ -28,6 +28,7 @@ export const PER_USER_TABLES = [
   "ai_usage",
   "api_tokens",
   "sessions",
+  "notifications_sent",
 ] as const;
 const PER_USER = new Set<string>(PER_USER_TABLES);
 const TABLE_WORDS = new RegExp(`\\b(${PER_USER_TABLES.join("|")})\\b`, "gi");
@@ -69,6 +70,27 @@ function maskNested(sql: string): string {
     } else out += depth > 0 ? " " : ch;
   }
   return out;
+}
+
+/**
+ * Columns of the two tables whose unique text column carries a per-user suffix for users other than the owner
+ * (see worker/lib/userkeys.ts). The shadow table hands the app the plain value. tests/scoped.test.ts checks these
+ * lists against the migrations so a new column cannot be forgotten.
+ */
+export const CATEGORY_COLUMNS = ["id", "parent_id", "slug", "name", "kind", "icon", "color", "sort_order", "archived", "created_at", "user_id"];
+export const MERCHANT_COLUMNS = ["id", "key", "name", "category_id", "category_source", "ai_confidence", "created_at", "updated_at", "user_id"];
+
+function plainColumn(column: string, userId: number): string {
+  return userId === 1 ? column : `substr(${column}, 1, length(${column}) - ${String(userId).length + 1})`;
+}
+
+/** The SELECT that makes up a user's rows of one table. */
+function userRows(table: string, userId: number): string {
+  const columns = table === "categories" ? CATEGORY_COLUMNS : table === "merchants" ? MERCHANT_COLUMNS : null;
+  const swap = table === "categories" ? "slug" : table === "merchants" ? "key" : null;
+  if (!columns || !swap || userId === 1) return `SELECT * FROM main.${table} WHERE user_id = ${userId}`;
+  const list = columns.map((c) => (c === swap ? `${plainColumn(c, userId)} AS ${c}` : c)).join(", ");
+  return `SELECT ${list} FROM main.${table} WHERE user_id = ${userId}`;
 }
 
 function fail(reason: string, sql: string): never {
@@ -136,7 +158,7 @@ export function scopeSql(sqlIn: string, userId: number): string {
   for (const m of q.matchAll(TABLE_WORDS)) mentioned.add(m[1].toLowerCase());
   if (target) mentioned.delete(target);
   if (!mentioned.size) return body;
-  const ctes = [...mentioned].map((t) => `${t} AS NOT MATERIALIZED (SELECT * FROM main.${t} WHERE user_id = ${userId})`).join(", ");
+  const ctes = [...mentioned].map((t) => `${t} AS NOT MATERIALIZED (${userRows(t, userId)})`).join(", ");
   const withMatch = body.match(/^\s*WITH(\s+RECURSIVE)?\s+/i);
   return withMatch ? `WITH${withMatch[1] ?? ""} ${ctes}, ${body.slice(withMatch[0].length)}` : `WITH ${ctes} ${body}`;
 }
@@ -171,6 +193,12 @@ export function forUser(env: Env, userId: number): Env {
 export function rawDb(env: Env): D1Database {
   const db = env.DB as unknown as ScopedD1;
   return db instanceof ScopedD1 ? db.raw : env.DB;
+}
+
+/** The user a (scoped) database belongs to; throws for the unrestricted database. */
+export function userIdOfDb(db: D1Database): number {
+  if (db instanceof ScopedD1) return db.userId;
+  throw new Error("This code needs a per-user database (use forUser)");
 }
 
 /** The user an Env is scoped to. */

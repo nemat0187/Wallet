@@ -64,6 +64,33 @@
 9. **Alerts:** Telegram message per transaction (optional), unusual‑amount warning, budget warnings once per
    threshold per month.
 
+## Users and data isolation (multi-user foundation)
+
+The database knows several users (`users` table; the existing data belongs to user 1, the owner/admin) but there is
+still only one login (the owner's `APP_PASSWORD`). Registration, approval, MFA by default, PIN and the other
+sign-in methods come in later releases; until then nothing visible changes.
+
+- Every per-user table has a `user_id`. **`worker/lib/scoped.ts` is the only place that decides who sees what.** After
+  login, each request gets an `Env` whose `DB` is limited to that user: per-user tables are shadowed by a CTE
+  holding only that user's rows (so every SELECT, JOIN and subquery is covered), `UPDATE`/`DELETE` get a
+  `user_id = N AND (...)` condition, and `INSERT` gets the `user_id`. Statements it cannot make safe (several
+  statements, `INSERT ... SELECT`, several `VALUES` rows, `REPLACE`) are refused, so a new query can never run
+  unscoped by accident. Services and routes therefore keep using `env.DB` as before.
+- Code that runs without a signed-in user picks the user explicitly with `forUser(env, id)`: the phone webhook
+  (from the token's owner), the Telegram webhook (from the linked chat or link code) and the hourly job (loops over
+  active users, each in their own timezone). `rawDb(env)` is only for login, sessions and shared data
+  (exchange rates, login attempts, the bot's webhook secret).
+- Settings live in `user_settings (user_id, key)`; only the Telegram bot's webhook secret stays installation-wide.
+- Four columns are `UNIQUE` across the whole database (category slug, merchant key, message hash, alert key) and
+  SQLite cannot change that without rebuilding tables, which would cascade-delete budgets. The owner keeps the
+  original values; other users get a suffix or salt (`worker/lib/userkeys.ts`), and the shadow table shows the
+  plain slug and key to the app. `tests/scoped.test.ts` checks the column lists against the migrations.
+- `npm run check:isolation` (against a local dev server) signs in as the owner and as a second user and verifies the
+  second user cannot list, read, change or delete the owner's rows, exports or sessions, that each user has their
+  own categories, settings, cards and tokens, and that disabled users are locked out (34 checks).
+- Free-tier note: all users share one database and the hourly job runs users one after another; before opening
+  registration to many people, re-check Cloudflare's current limits.
+
 ## Card balances
 
 `accounts.balance` is a snapshot: the “Balans” from the newest bank message, or a running sum for the cash wallet.

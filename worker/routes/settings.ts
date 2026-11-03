@@ -6,6 +6,7 @@ import type { Account, Category, Transaction } from "@shared/types";
 import { badRequest } from "../lib/http";
 import { all, first } from "../lib/db";
 import { EDITABLE, getSettings, setSetting } from "../services/settings";
+import { rawDb, userIdOf } from "../lib/scoped";
 import { disconnectTelegram, handleTelegramUpdate, notifyOwner, startTelegramLink } from "../services/telegram";
 import { categoryPath, loadCategories } from "../services/categorize";
 import { TX_SELECT } from "../services/analytics";
@@ -127,7 +128,7 @@ app.get("/export/backup.json", async (c) => {
   const data: Record<string, unknown[]> = {};
   for (const table of BACKUP_TABLES) data[table] = await all(c.env.DB, `SELECT * FROM ${table}`);
   // Settings without secrets.
-  data.settings = (await all<{ key: string; value: string }>(c.env.DB, "SELECT key, value FROM settings")).filter(
+  data.settings = (await all<{ key: string; value: string }>(rawDb(c.env), "SELECT key, value FROM user_settings WHERE user_id = ?", userIdOf(c.env))).filter(
     (s) => !/secret|telegram_chat|link_code/.test(s.key),
   );
   return new Response(JSON.stringify({ version: 1, exported_at: new Date().toISOString(), data }, null, 1), {

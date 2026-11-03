@@ -29,7 +29,7 @@ app.post("/login", async (c) => {
     await recordFailure(c.env.DB, ip);
     throw new HTTPException(401, { message: "Wrong password" });
   }
-  const totpSecret = await getSetting(c.env.DB, "totp_secret");
+  const totpSecret = await getSetting(forUser(c.env, OWNER_ID).DB, "totp_secret");
   if (totpSecret) {
     if (!code) return c.json({ ok: false, totp_required: true });
     if (!(await verifyTotp(totpSecret, code))) {

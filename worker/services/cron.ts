@@ -2,7 +2,8 @@
 
 import type { Env } from "../env";
 import { localDate, localHour, periodFor, formatMoney } from "@shared/money";
-import { first, nowIso } from "../lib/db";
+import { all, first, nowIso } from "../lib/db";
+import { forUser, rawDb } from "../lib/scoped";
 import { categorizeAllPending } from "./categorize";
 import { fetchCbarRates } from "./fx";
 import { generateReport } from "./insights";
@@ -13,7 +14,19 @@ import { ensureSeeded } from "./seed";
 
 const REPORT_HOUR = 9; // local time
 
+/** Hourly job: runs the same steps for every active user, each in their own timezone and with their own data. */
 export async function runScheduled(env: Env, when = new Date()): Promise<void> {
+  const users = await all<{ id: number }>(rawDb(env), "SELECT id FROM users WHERE status = 'active' ORDER BY id");
+  for (const u of users) {
+    try {
+      await runForUser(forUser(env, u.id), when);
+    } catch (e) {
+      console.error(`cron: user ${u.id}`, e);
+    }
+  }
+}
+
+async function runForUser(env: Env, when: Date): Promise<void> {
   await ensureSeeded(env.DB);
   const settings = await getSettings(env);
   const hour = localHour(when, settings.tz_offset_minutes);

@@ -3,6 +3,7 @@ import type { Settings } from "@shared/types";
 import type { HomeItem } from "@shared/home";
 import { HomeLayoutSchema } from "../routes/dashboards";
 import { all, run } from "../lib/db";
+import { ScopedD1, userIdOfDb } from "../lib/scoped";
 
 export const MODEL_OPTIONS = ["claude-haiku-5-5", "claude-sonnet-5-5", "claude-opus-5-5"] as const;
 
@@ -50,27 +51,52 @@ function bool(v: unknown): string | null {
   return typeof v === "boolean" ? (v ? "1" : "0") : null;
 }
 
+/** Settings that belong to the installation, not to a user (the Telegram bot has one webhook secret). */
+const GLOBAL_KEYS = new Set(["telegram_webhook_secret"]);
+
+function owner(db: D1Database): { raw: D1Database; userId: number } {
+  return { raw: db instanceof ScopedD1 ? db.raw : db, userId: userIdOfDb(db) };
+}
+
 export async function getRawSettings(db: D1Database): Promise<Record<string, string>> {
-  const rows = await all<{ key: string; value: string }>(db, "SELECT key, value FROM settings");
+  const { raw, userId } = owner(db);
+  const rows = await all<{ key: string; value: string }>(raw, "SELECT key, value FROM user_settings WHERE user_id = ?", userId);
   const map: Record<string, string> = { ...DEFAULTS };
   for (const r of rows) map[r.key] = r.value;
   return map;
 }
 
 export async function getSetting(db: D1Database, key: string): Promise<string | null> {
-  const row = await db.prepare("SELECT value FROM settings WHERE key = ?").bind(key).first<{ value: string }>();
+  if (GLOBAL_KEYS.has(key)) {
+    const row = await rawOf(db).prepare("SELECT value FROM settings WHERE key = ?").bind(key).first<{ value: string }>();
+    return row?.value ?? null;
+  }
+  const { raw, userId } = owner(db);
+  const row = await raw.prepare("SELECT value FROM user_settings WHERE user_id = ? AND key = ?").bind(userId, key).first<{ value: string }>();
   return row?.value ?? DEFAULTS[key] ?? null;
 }
 
 export async function setSetting(db: D1Database, key: string, value: string | null): Promise<void> {
-  if (value === null) await run(db, "DELETE FROM settings WHERE key = ?", key);
+  if (GLOBAL_KEYS.has(key)) {
+    const raw = rawOf(db);
+    if (value === null) await run(raw, "DELETE FROM settings WHERE key = ?", key);
+    else await run(raw, "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value", key, value);
+    return;
+  }
+  const { raw, userId } = owner(db);
+  if (value === null) await run(raw, "DELETE FROM user_settings WHERE user_id = ? AND key = ?", userId, key);
   else
     await run(
-      db,
-      "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+      raw,
+      "INSERT INTO user_settings (user_id, key, value) VALUES (?, ?, ?) ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value",
+      userId,
       key,
       value,
     );
+}
+
+function rawOf(db: D1Database): D1Database {
+  return db instanceof ScopedD1 ? db.raw : db;
 }
 
 function parseLayout(raw: string | undefined): HomeItem[] | null {

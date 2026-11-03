@@ -1,14 +1,17 @@
+import { readFileSync, readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
-import { scopeSql } from "../worker/lib/scoped";
+import { CATEGORY_COLUMNS, MERCHANT_COLUMNS, scopeSql } from "../worker/lib/scoped";
 
 const U = 7;
 const shadow = (t: string) => `${t} AS NOT MATERIALIZED (SELECT * FROM main.${t} WHERE user_id = ${U})`;
+/** True when the statement shadows the table with only user 7's rows (categories/merchants list their columns). */
+const hasShadow = (sql: string, t: string) => sql.includes(`${t} AS NOT MATERIALIZED (SELECT `) && sql.includes(`FROM main.${t} WHERE user_id = ${U})`);
 
 describe("scopeSql: reads", () => {
   it("shadows every per-user table named, including joins and subqueries", () => {
     const sql = scopeSql("SELECT t.*, m.name FROM transactions t LEFT JOIN merchants m ON m.id = t.merchant_id WHERE t.category_id IN (SELECT id FROM categories WHERE parent_id = ?)", U);
     expect(sql.startsWith("WITH ")).toBe(true);
-    for (const t of ["transactions", "merchants", "categories"]) expect(sql).toContain(shadow(t));
+    for (const t of ["transactions", "merchants", "categories"]) expect(hasShadow(sql, t)).toBe(true);
     expect(sql).toContain("SELECT t.*, m.name FROM transactions t");
   });
 
@@ -41,8 +44,8 @@ describe("scopeSql: writes", () => {
 
   it("shadows tables used in subqueries of an insert", () => {
     const sql = scopeSql("INSERT INTO budgets (category_id, amount) VALUES ((SELECT id FROM categories WHERE slug = ?), ?)", U);
-    expect(sql).toContain(shadow("categories"));
-    expect(sql).not.toContain(shadow("budgets"));
+    expect(hasShadow(sql, "categories")).toBe(true);
+    expect(hasShadow(sql, "budgets")).toBe(false);
     expect(sql).toContain("INSERT INTO budgets (user_id, category_id, amount) VALUES (7, (SELECT id FROM categories");
   });
 
@@ -56,7 +59,7 @@ describe("scopeSql: writes", () => {
     const sql = scopeSql("UPDATE transactions SET pair_id = NULL WHERE pair_id IN (SELECT id FROM transactions WHERE kind = 'x') OR id = ?", U);
     expect(sql).toBe("UPDATE transactions SET pair_id = NULL WHERE user_id = 7 AND ( pair_id IN (SELECT id FROM transactions WHERE kind = 'x') OR id = ?)");
     const set = scopeSql("UPDATE transactions SET c = (SELECT id FROM categories WHERE slug = ?) WHERE id = ?", U);
-    expect(set).toContain(shadow("categories"));
+    expect(hasShadow(set, "categories")).toBe(true);
     expect(set).toContain("WHERE user_id = 7 AND ( id = ?)");
   });
 
@@ -82,4 +85,38 @@ describe("scopeSql: refuses what it cannot make safe", () => {
     expect(() => scopeSql("SELECT 1", 0)).toThrow();
     expect(() => scopeSql("SELECT 1", 1.5)).toThrow();
   });
+});
+
+describe("scopeSql: plain slug and key for every user", () => {
+  it("shows the stored suffix-free value to users other than the owner", () => {
+    const sql = scopeSql("SELECT * FROM categories WHERE slug = ?", 7);
+    expect(sql).toContain("substr(slug, 1, length(slug) - 2) AS slug");
+    expect(scopeSql("SELECT * FROM merchants", 12)).toContain("substr(key, 1, length(key) - 3) AS key");
+  });
+  it("leaves the owner's rows as they are", () => {
+    expect(scopeSql("SELECT * FROM categories", 1)).toContain("SELECT * FROM main.categories WHERE user_id = 1");
+  });
+});
+
+/** Columns of a table according to the migrations (CREATE TABLE plus ALTER TABLE ADD COLUMN). */
+function migrationColumns(table: string): string[] {
+  const files = readdirSync("migrations").filter((f) => f.endsWith(".sql")).sort();
+  const cols: string[] = [];
+  for (const f of files) {
+    const sql = readFileSync(`migrations/${f}`, "utf8").replace(/--.*$/gm, "");
+    const create = sql.match(new RegExp(`CREATE TABLE ${table} \\(([\\s\\S]*?)\\n\\);`));
+    if (create) {
+      for (const line of create[1].split("\n")) {
+        const m = line.trim().match(/^([a-z_]+)\s+(INTEGER|TEXT|REAL)/i);
+        if (m) cols.push(m[1]);
+      }
+    }
+    for (const m of sql.matchAll(new RegExp(`ALTER TABLE ${table} ADD COLUMN ([a-z_]+)`, "gi"))) cols.push(m[1]);
+  }
+  return cols;
+}
+
+describe("per-user views list every column", () => {
+  it("categories", () => expect(CATEGORY_COLUMNS).toEqual(migrationColumns("categories")));
+  it("merchants", () => expect(MERCHANT_COLUMNS).toEqual(migrationColumns("merchants")));
 });

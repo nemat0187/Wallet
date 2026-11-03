@@ -13,6 +13,8 @@ import { ingestMessage, processMessage } from "../services/ingest";
 import { afterTransactions } from "../services/alerts";
 import { parseBankMessage } from "../services/parser";
 import { getSettings } from "../services/settings";
+import { forUser } from "../lib/scoped";
+import { ensureSeeded } from "../services/seed";
 
 // ---------------------------------------------------------------------------
 // Public webhook: POST /api/ingest  (token in "Authorization: Bearer", "X-Api-Key", ?token= or body.token)
@@ -69,9 +71,15 @@ publicIngest.post("/", async (c) => {
     (typeof payload.token === "string" ? payload.token : undefined);
   if (!token) throw new HTTPException(401, { message: "Missing token" });
   const tokenHash = await sha256Hex(token.trim());
-  const tokenRow = await first<{ id: number }>(c.env.DB, "SELECT id FROM api_tokens WHERE token_hash = ?", tokenHash);
+  const tokenRow = await first<{ id: number; user_id: number }>(
+    c.env.DB,
+    "SELECT t.id, t.user_id FROM api_tokens t JOIN users u ON u.id = t.user_id WHERE t.token_hash = ? AND u.status = 'active'",
+    tokenHash,
+  );
   if (!tokenRow) throw new HTTPException(401, { message: "Invalid token" });
   await run(c.env.DB, "UPDATE api_tokens SET last_used_at = ? WHERE id = ?", nowIso(), tokenRow.id);
+  // Everything below acts for the token's owner only.
+  const env = forUser(c.env, tokenRow.user_id);
 
   // Different forwarder apps use different field names; accept the common ones.
   const pick = (...keys: string[]) => {
@@ -97,9 +105,10 @@ publicIngest.post("/", async (c) => {
   }
   const source = (pick("source", "type") ?? "sms").toLowerCase().includes("push") ? "push" : "sms";
 
-  const result = await ingestMessage(c.env, { body: text, sender, source, receivedAt });
+  await ensureSeeded(env.DB);
+  const result = await ingestMessage(env, { body: text, sender, source, receivedAt });
   if (result.transaction_id && result.status === "parsed") {
-    c.executionCtx.waitUntil(afterTransactions(c.env, [result.transaction_id], { needsAi: result.needs_ai }));
+    c.executionCtx.waitUntil(afterTransactions(env, [result.transaction_id], { needsAi: result.needs_ai }));
   }
   return c.json({ ok: true, status: result.status, transaction_id: result.transaction_id, error: result.error ?? null });
 });

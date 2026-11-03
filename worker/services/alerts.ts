@@ -8,6 +8,8 @@ import { formatMoney, shiftPeriod } from "@shared/money";
 import { all, first, nowIso, placeholders, run } from "../lib/db";
 import { categorizePendingWithAI, categoryPath, loadCategories } from "./categorize";
 import { budgetStatus, rangeBudgetStatuses } from "./budgets";
+import { userIdOf } from "../lib/scoped";
+import { userKey } from "../lib/userkeys";
 import { getSettings } from "./settings";
 import { escapeHtml, notifyOwner } from "./telegram";
 import { today } from "./analytics";
@@ -70,7 +72,7 @@ export async function checkBudgetAlerts(env: Env): Promise<void> {
   for (const b of budgets) {
     const level = b.spent > b.amount ? 100 : b.pct >= b.alert_pct ? b.alert_pct : 0;
     if (!level) continue;
-    const key = `budget:${b.category_id ?? "overall"}:${period.start}:${level}`;
+    const key = userKey(userIdOf(env), `budget:${b.category_id ?? "overall"}:${period.start}:${level}`);
     const sent = await first<{ key: string }>(env.DB, "SELECT key FROM notifications_sent WHERE key = ?", key);
     if (sent) continue;
     const name = b.category_id ? categoryPath(idx, b.category_id) : "Overall budget";
@@ -86,7 +88,7 @@ export async function checkBudgetAlerts(env: Env): Promise<void> {
     if (b.state !== "active") continue;
     const level = b.spent > b.amount ? 100 : b.pct >= b.alert_pct ? b.alert_pct : 0;
     if (!level) continue;
-    const key = `range:${b.range.id}:${b.period.start}:${level}`;
+    const key = userKey(userIdOf(env), `range:${b.range.id}:${b.period.start}:${level}`);
     if (await first<{ key: string }>(env.DB, "SELECT key FROM notifications_sent WHERE key = ?", key)) continue;
     const name = b.range.name || (b.category_id ? categoryPath(idx, b.category_id) : "Overall budget");
     const label = `${escapeHtml(name)} (${escapeHtml(b.period.label)})`;
