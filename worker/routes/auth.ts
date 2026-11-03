@@ -3,7 +3,7 @@ import { HTTPException } from "hono/http-exception";
 import { z } from "zod";
 import type { AppEnv } from "../env";
 import { body } from "../lib/http";
-import { safeEqual } from "../lib/crypto";
+import { base64url, randomToken, safeEqual, sha256Hex } from "../lib/crypto";
 import { all, first, insert, nowIso, run } from "../lib/db";
 import { clientIp, createSession, destroySession, isAppClient, validateSession } from "../auth/session";
 import { forUser, rawDb } from "../lib/scoped";
@@ -14,7 +14,6 @@ import { signToken, verifyToken } from "../lib/secretbox";
 import { getSetting, setSetting } from "../services/settings";
 import { authUrl, exchangeCode, googleConfigured } from "../services/google";
 import { notifyAdmins, escapeHtml } from "../services/telegram";
-import { randomToken } from "../lib/crypto";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
 
 const app = new Hono<AppEnv>();
@@ -102,11 +101,15 @@ app.get("/me", async (c) => {
 const GOOGLE_COOKIE = "wallet_google";
 const MAX_PENDING = 20;
 
-function startGoogle(c: Context<AppEnv>, linkingUserId: number | null) {
-  if (!googleConfigured(c.env)) return c.redirect("/?auth=error");
+const APP_LINK = "wallet://auth"; // where the system browser sends the person back to the Android app
+const PKCE_CHALLENGE = /^[A-Za-z0-9_-]{43}$/; // base64url(SHA-256(verifier)), 43 characters
+const APP_CODE_MINUTES = 5;
+
+function startGoogle(c: Context<AppEnv>, linkingUserId: number | null, appChallenge?: string) {
+  if (!googleConfigured(c.env)) return c.redirect(appChallenge ? `${APP_LINK}?status=error` : "/?auth=error");
   const state = randomToken(16);
   const nonce = randomToken(16);
-  setCookie(c, GOOGLE_COOKIE, `${state}.${nonce}`, {
+  setCookie(c, GOOGLE_COOKIE, `${state}.${nonce}${appChallenge ? `.${appChallenge}` : ""}`, {
     httpOnly: true,
     secure: new URL(c.req.url).protocol === "https:",
     sameSite: "Lax",
@@ -117,14 +120,22 @@ function startGoogle(c: Context<AppEnv>, linkingUserId: number | null) {
 }
 
 app.get("/google/start", (c) => {
-  const r = startGoogle(c, null);
+  // From the Android app: ?client=app&challenge=<PKCE challenge>. The result comes back as wallet://auth?code=… (see /app-exchange).
+  const app = c.req.query("client") === "app";
+  const challenge = c.req.query("challenge") ?? "";
+  if (app && !PKCE_CHALLENGE.test(challenge)) throw new HTTPException(400, { message: "A valid PKCE challenge is required" });
+  const r = startGoogle(c, null, app ? challenge : undefined);
   return r instanceof Response ? r : c.redirect(r.url);
 });
 
 app.get("/google/callback", async (c) => {
+  // The app flow carries its PKCE challenge as a third part of the state cookie.
+  const appChallenge = (getCookie(c, GOOGLE_COOKIE) ?? "").split(".")[2];
   const done = (to: string) => {
     deleteCookie(c, GOOGLE_COOKIE, { path: "/api/auth/google" });
-    return c.redirect(to);
+    const status = to.match(/^\/\?auth=(\w+)$/)?.[1];
+    // In the app flow every outcome goes back to the app instead of the website.
+    return c.redirect(appChallenge ? `${APP_LINK}?status=${status ?? "error"}` : to);
   };
   if (!googleConfigured(c.env)) return done("/?auth=error");
   const code = c.req.query("code");
@@ -166,6 +177,12 @@ app.get("/google/callback", async (c) => {
     if (user.status === "disabled") return done("/?auth=disabled");
     if (!user.google_sub) await run(db, "UPDATE users SET google_sub = ? WHERE id = ?", claims.sub, user.id);
     deleteCookie(c, GOOGLE_COOKIE, { path: "/api/auth/google" });
+    if (appChallenge && PKCE_CHALLENGE.test(appChallenge)) {
+      const oneTime = randomToken(32);
+      await run(db, "DELETE FROM app_codes WHERE expires_at < ?", nowIso());
+      await run(db, "INSERT INTO app_codes (code_hash, user_id, challenge, expires_at) VALUES (?, ?, ?, ?)", await sha256Hex(oneTime), user.id, appChallenge, new Date(Date.now() + APP_CODE_MINUTES * 60_000).toISOString());
+      return c.redirect(`${APP_LINK}?code=${oneTime}`);
+    }
     return signIn(c, user.id, true);
   }
 
@@ -178,6 +195,30 @@ app.get("/google/callback", async (c) => {
   await insert(db, "INSERT INTO users (email, name, google_sub, role, status, created_at) VALUES (?, ?, ?, 'user', 'pending', ?)", email, claims.name ?? "", claims.sub, nowIso());
   c.executionCtx.waitUntil(notifyAdmins(c.env, `🆕 <b>${escapeHtml(claims.name || email)}</b> (${escapeHtml(email)}) asked for access. Open Admin → Users to approve.`));
   return done("/?auth=pending");
+});
+
+/**
+ * The app trades the one-time code from wallet://auth?code=… plus its PKCE verifier for a session token.
+ * The code works once (it is deleted before it is checked), expires in minutes, and is useless without the verifier,
+ * so another app that catches the wallet:// link cannot sign in with it.
+ */
+app.post("/app-exchange", async (c) => {
+  if (!isAppClient(c)) throw new HTTPException(400, { message: "Send the header x-client: app" });
+  const { code, verifier } = await body(c, z.object({ code: z.string().min(20).max(100), verifier: z.string().min(43).max(128) }));
+  const db = rawDb(c.env);
+  const ip = clientIp(c);
+  const wait = await lockedFor(db, ip);
+  if (wait > 0) throw new HTTPException(429, { message: `Too many attempts. Try again in ${Math.ceil(wait / 60)} minute(s).` });
+  const hash = await sha256Hex(code);
+  const row = await first<{ user_id: number; challenge: string; expires_at: string }>(db, "SELECT user_id, challenge, expires_at FROM app_codes WHERE code_hash = ?", hash);
+  if (row) await run(db, "DELETE FROM app_codes WHERE code_hash = ?", hash);
+  const fresh = row && Date.parse(row.expires_at) > Date.now();
+  const proof = fresh ? base64url(new Uint8Array(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier)))) : "";
+  if (!row || !fresh || !(await safeEqual(proof, row.challenge))) {
+    await recordFailure(db, ip);
+    throw new HTTPException(400, { message: "That sign-in link has expired or was already used. Please try again." });
+  }
+  return signIn(c, row.user_id);
 });
 
 // Routes below require a session (and, for changes, a request from this site).

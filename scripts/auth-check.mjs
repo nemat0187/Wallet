@@ -9,7 +9,7 @@
 
 import { createServer } from "node:http";
 import { execFileSync } from "node:child_process";
-import { createHmac } from "node:crypto";
+import { createHash, createHmac, randomBytes } from "node:crypto";
 import { readFileSync } from "node:fs";
 
 const BASE = process.env.BASE_URL ?? "http://127.0.0.1:8787";
@@ -76,8 +76,8 @@ async function verify(mfaCookie, code) {
 
 
 /** Play the browser: start, then come back from Google with the given claims. Returns {location, cookies}. */
-async function googleSignIn(claims, { tamperState = false } = {}) {
-  const start = await fetch(`${BASE}/api/auth/google/start`, nohtml);
+async function googleSignIn(claims, { tamperState = false, challenge = null } = {}) {
+  const start = await fetch(`${BASE}/api/auth/google/start${challenge ? `?client=app&challenge=${challenge}` : ""}`, nohtml);
   const url = new URL(start.headers.get("location"));
   const stateCookie = cookieOf(start).find((c) => c.startsWith("wallet_google="));
   const nonce = url.searchParams.get("nonce");
@@ -145,6 +145,37 @@ try {
   check("disabled person cannot sign in again", (await googleSignIn(claims)).location === "/?auth=disabled");
   await owner("POST", `/admin/users/${row.id}/enable`);
   check("enabled again, they can sign in", (await googleSignIn(claims)).location === "/");
+
+  // 6b. Google sign-in from the Android app: system browser -> wallet://auth?code=... -> exchange with the PKCE verifier.
+  const pkce = () => {
+    const verifier = randomBytes(32).toString("base64url");
+    return { verifier, challenge: createHash("sha256").update(verifier).digest("base64url") };
+  };
+  const exchange = (code, verifier, headers = { "x-client": "app" }) => fetch(`${BASE}/api/auth/app-exchange`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify({ code, verifier }) });
+  check("the app flow needs a valid PKCE challenge", (await fetch(`${BASE}/api/auth/google/start?client=app&challenge=short`, nohtml)).status === 400);
+  const p1 = pkce();
+  const a1 = await googleSignIn(claims, { challenge: p1.challenge });
+  const code1 = new URL(a1.location.replace("wallet://", "https://x/")).searchParams.get("code");
+  check("an approved person is sent back to the app with a one-time code and no cookie", a1.location.startsWith("wallet://auth?code=") && a1.cookies.length === 0 && code1?.length >= 20, a1.location);
+  check("the code is refused with the wrong verifier", (await exchange(code1, pkce().verifier)).status === 400);
+  check("and a refused try burns the code", (await exchange(code1, p1.verifier)).status === 400);
+  const p2 = pkce();
+  const code2 = new URL((await googleSignIn(claims, { challenge: p2.challenge })).location.replace("wallet://", "https://x/")).searchParams.get("code");
+  check("the exchange needs the app header", (await exchange(code2, p2.verifier, {})).status === 400);
+  const ex = await exchange(code2, p2.verifier);
+  const exData = await ex.json();
+  check("code plus verifier gives a session token (no cookie)", ex.status === 200 && exData.ok === true && Boolean(exData.token) && !named(ex, "wallet_session"), JSON.stringify(exData));
+  check("the token signs in as that person", (await (await fetch(`${BASE}/api/bootstrap`, { headers: { authorization: `Bearer ${exData.token}` } })).json()).user?.email === email);
+  check("the code works only once", (await exchange(code2, p2.verifier)).status === 400);
+  const p3 = pkce();
+  const code3 = new URL((await googleSignIn(claims, { challenge: p3.challenge })).location.replace("wallet://", "https://x/")).searchParams.get("code");
+  sql(`UPDATE app_codes SET expires_at = '2000-01-01T00:00:00.000Z'`);
+  check("an expired code is refused", (await exchange(code3, p3.verifier)).status === 400);
+  await owner("POST", `/admin/users/${row.id}/disable`);
+  check("a disabled person is told so in the app flow", (await googleSignIn(claims, { challenge: pkce().challenge })).location === "wallet://auth?status=disabled");
+  await owner("POST", `/admin/users/${row.id}/enable`);
+  check("a tampered state in the app flow goes back to the app with an error", (await googleSignIn(claims, { tamperState: true, challenge: pkce().challenge })).location === "wallet://auth?status=error");
+  sql("DELETE FROM login_attempts");
 
   // 7. Reject removes a request; delete removes a user and their data.
   const claims2 = { sub: `sub2-${Date.now()}`, email: `second${Date.now()}@example.test`, name: "Second" };
